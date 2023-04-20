@@ -1,22 +1,27 @@
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern
 from scipy.signal import convolve2d
+from scipy.optimize import minimize
+from abc import ABC, abstractmethod
 import matplotlib.pyplot as plt
-import concurrent.futures
-import chess.engine
-import scipy as sp
+from collections import deque
+from scipy.stats import norm
 import numpy as np
-import itertools
-import functools
+import statistics
 import pickle
 import random
-import chess
+import joblib
 import copy
-import nnfs
+import time
+import json
+import time
 import cv2
+import gym
 import os
 
-nnfs.init()
-
 # Dense layer
+
+
 class Layer_Dense:
 
     # Layer initialization
@@ -46,8 +51,6 @@ class Layer_Dense:
         self.dweights = np.dot(self.inputs.T, dvalues)
         self.dbiases = np.sum(dvalues, axis=0, keepdims=True)
 
-
-
         # Gradients on regularization
         # L1 on weights
         if self.weight_regularizer_l1 > 0:
@@ -57,7 +60,7 @@ class Layer_Dense:
         # L2 on weights
         if self.weight_regularizer_l2 > 0:
             self.dweights += 2 * self.weight_regularizer_l2 * \
-                             self.weights
+                self.weights
         # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.biases)
@@ -66,7 +69,7 @@ class Layer_Dense:
         # L2 on biases
         if self.bias_regularizer_l2 > 0:
             self.dbiases += 2 * self.bias_regularizer_l2 * \
-                            self.biases
+                self.biases
 
         # Gradient on values
         self.dinputs = np.dot(dvalues, self.weights.T)
@@ -80,7 +83,9 @@ class Layer_Dense:
         self.weights = weights
         self.biases = biases
 
-# Dropout
+# Dropout layer
+
+
 class Layer_Dropout:
 
     # Init
@@ -94,8 +99,6 @@ class Layer_Dropout:
         # Save input values
         self.inputs = inputs
 
-
-
         # If not in the training mode - return values
         if not training:
             self.output = inputs.copy()
@@ -103,7 +106,7 @@ class Layer_Dropout:
 
         # Generate and save scaled mask
         self.binary_mask = np.random.binomial(1, self.rate,
-                           size=inputs.shape) / self.rate
+                                              size=inputs.shape) / self.rate
         # Apply mask to output values
         self.output = inputs * self.binary_mask
 
@@ -113,11 +116,13 @@ class Layer_Dropout:
         self.dinputs = dvalues * self.binary_mask
 
 # Convolutional layer class
+
+
 class Layer_Convolutional:
 
     # Initialization
-    def __init__(self, Filters, Padding=0, Biases=0, IsMultipleFilters=True, 
-                 IsMultipleInputs=True, weight_regularizer_l1=0, weight_regularizer_l2=0, 
+    def __init__(self, Filters, Padding=0, Biases=0, IsMultipleFilters=True,
+                 IsMultipleInputs=True, weight_regularizer_l1=0, weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0):
 
         # Set layer variables
@@ -131,12 +136,11 @@ class Layer_Convolutional:
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
 
-
         # Define blank list
         # to append to
         self.FilterSizes = []
 
-        # Itterate through every filter and append 
+        # Itterate through every filter and append
         # it's size to the FilterSizes list
         for i, kernel in enumerate(self.Filters):
 
@@ -153,7 +157,8 @@ class Layer_Convolutional:
 
         # Calculate output size
         # length x hight
-        self.OutputSize = [self.InputSize[0] - self.KernelSize[0] + 1, self.InputSize[1] - self.KernelSize[1] + 1]
+        self.OutputSize = [self.InputSize[0] - self.KernelSize[0] +
+                           1, self.InputSize[1] - self.KernelSize[1] + 1]
 
         # Define blank list
         self.ConvolutionalSlice = []
@@ -172,18 +177,20 @@ class Layer_Convolutional:
                 # Add the bias
                 self.ConvolutionResult += self.Biases[0][index]
 
-        # Return the reshaped output of 
-        # the convolution slice after 
+        # Return the reshaped output of
+        # the convolution slice after
         # undergoing it's given equation
         return np.reshape(self.ConvolutionResult, self.OutputSize)
 
 # Additive convolution
+
+
 class Basic_Convolution(Layer_Convolutional):
 
     # Forward method
     def forward(self, inputs, training):
 
-        self.batch_size = len(model.batch_X)
+        self.batch_size = len(model.batch_X)  # ! Change to more general !
 
         self.XPadded = inputs
 
@@ -195,7 +202,7 @@ class Basic_Convolution(Layer_Convolutional):
 
                 self.XPadded = []
 
-                # If true, iterate through 
+                # If true, iterate through
                 # inputs and pad
                 for matrix in inputs:
 
@@ -240,8 +247,9 @@ class Basic_Convolution(Layer_Convolutional):
             # And for every kernel
             for index, kernel in enumerate(self.Filters):
 
-                # Append the output of the convolution 
-                self.outputPreBatch.append((self.ConvolutionalSlicer(kernel, matrix, 'Basic_Convolution', 'forward', index)))
+                # Append the output of the convolution
+                self.outputPreBatch.append((self.ConvolutionalSlicer(
+                    kernel, matrix, 'Basic_Convolution', 'forward', index)))
 
             self.output.append(self.outputPreBatch)
 
@@ -263,7 +271,7 @@ class Basic_Convolution(Layer_Convolutional):
         # L2 on weights
         if self.weight_regularizer_l2 > 0:
             self.dweights += 2 * self.weight_regularizer_l2 * \
-                             self.Filters
+                self.Filters
         # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.Biases)
@@ -272,10 +280,10 @@ class Basic_Convolution(Layer_Convolutional):
         # L2 on biases
         if self.bias_regularizer_l2 > 0:
             self.dbiases += 2 * self.bias_regularizer_l2 * \
-                            self.Biases
+                self.Biases
 
-        # Iterate through every output (input on 
-        # the forward pass, since self.output's 
+        # Iterate through every output (input on
+        # the forward pass, since self.output's
         # first dimention is the inputs)
         for i in range(0, self.batch_size):
 
@@ -286,87 +294,14 @@ class Basic_Convolution(Layer_Convolutional):
                 self.rotated_filter = np.rot90(self.Filters[j], 2)
 
                 # Convolve the gradient with the rotated filter
-                self.dinputs.append(self.ConvolutionalSlicer(self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
+                self.dinputs.append(self.ConvolutionalSlicer(
+                    self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
 
                 # Append the derivative of the weights at index j
-                self.dweights.append(self.ConvolutionalSlicer(dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
+                self.dweights.append(self.ConvolutionalSlicer(
+                    dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
 
                 self.dbiases.append(sum(dvalues[j]))
-
-# Additive convolution
-class Max_Convolution(Layer_Convolutional):
-
-    # Forward method
-    def forward(self, inputs, training):
-
-        self.batch_size = len(model.batch_X)
-
-        self.XPadded = inputs
-
-        # Padding check
-        if self.Padding > 0:
-
-            # Multiple inputs check
-            if self.IsMultipleInputs == True:
-
-                self.XPadded = []
-
-                # If true, iterate through 
-                # inputs and pad
-                for matrix in inputs:
-
-                    # Add padding
-                    self.XPadded.append(np.pad(matrix, self.Padding))
-
-        # For singular input
-        else:
-
-            # Add padding
-            self.XPadded = np.pad(self.XPadded, self.Padding)
-
-        # Define blank array
-        # for input sizes
-        self.InputSize = []
-
-        # If there are multiple inputs
-        if self.IsMultipleInputs == True:
-
-            # Itterate through each input
-            for matrix in self.XPadded:
-
-                # Append the hight x length
-                # of each input to the variable
-                self.InputSize.append([len(matrix[0]), len(matrix)])
-
-        # If there is one input
-        else:
-
-            # Get hight x length
-            # of the singular input
-            # and append it to the variable
-            self.InputSize = [len(self.XPadded[0]), len(self.XPadded)]
-
-        self.output = []
-
-        self.outputPreBatch = []
-
-        # Itterate through each input
-        for i, matrix in enumerate(self.XPadded):
-
-            # And for every kernel
-            for index, kernel in enumerate(self.Filters):
-
-                # Append the output of the convolution 
-                self.outputPreBatch.append((self.ConvolutionalSlicer(kernel, matrix, 'Basic_Convolution', 'forward', index)))
-
-            self.output.append(self.outputPreBatch)
-
-        self.output = np.array(self.outputPreBatch, dtype=object)
-
-        self.weights = self.Filters
-        self.biases = self.Biases
-
-    def backward(self, dvalues):
 
         # Define blank lists to append to
         self.dweights = []
@@ -382,7 +317,7 @@ class Max_Convolution(Layer_Convolutional):
         # L2 on weights
         if self.weight_regularizer_l2 > 0:
             self.dweights += 2 * self.weight_regularizer_l2 * \
-                             self.weights
+                self.weights
         # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.biases)
@@ -391,10 +326,10 @@ class Max_Convolution(Layer_Convolutional):
         # L2 on biases
         if self.bias_regularizer_l2 > 0:
             self.dbiases += 2 * self.bias_regularizer_l2 * \
-                            self.biases
+                self.biases
 
-        # Iterate through every output (input on 
-        # the forward pass, since self.output's 
+        # Iterate through every output (input on
+        # the forward pass, since self.output's
         # first dimention is the inputs)
         for i in range(0, self.batch_size):
 
@@ -405,133 +340,18 @@ class Max_Convolution(Layer_Convolutional):
                 self.rotated_filter = np.rot90(self.Filters[j], 2)
 
                 # Convolve the gradient with the rotated filter
-                self.dinputs.append(self.ConvolutionalSlicer(self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
+                self.dinputs.append(self.ConvolutionalSlicer(
+                    self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
 
                 # Append the derivative of the weights at index j
-                self.dweights.append(self.ConvolutionalSlicer(dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
-
-                self.dbiases.append(sum(dvalues[j]))
-
-# Additive convolution
-class Average_Convolution(Layer_Convolutional):
-
-    # Forward method
-    def forward(self, inputs, training):
-
-        self.batch_size = len(model.batch_X)
-
-        self.XPadded = inputs
-
-        # Padding check
-        if self.Padding > 0:
-
-            # Multiple inputs check
-            if self.IsMultipleInputs == True:
-
-                self.XPadded = []
-
-                # If true, iterate through 
-                # inputs and pad
-                for matrix in inputs:
-
-                    # Add padding
-                    self.XPadded.append(np.pad(matrix, self.Padding))
-
-        # For singular input
-        else:
-
-            # Add padding
-            self.XPadded = np.pad(self.XPadded, self.Padding)
-
-        # Define blank array
-        # for input sizes
-        self.InputSize = []
-
-        # If there are multiple inputs
-        if self.IsMultipleInputs == True:
-
-            # Itterate through each input
-            for matrix in self.XPadded:
-
-                # Append the hight x length
-                # of each input to the variable
-                self.InputSize.append([len(matrix[0]), len(matrix)])
-
-        # If there is one input
-        else:
-
-            # Get hight x length
-            # of the singular input
-            # and append it to the variable
-            self.InputSize = [len(self.XPadded[0]), len(self.XPadded)]
-
-        self.output = []
-
-        self.outputPreBatch = []
-
-        # Itterate through each input
-        for i, matrix in enumerate(self.XPadded):
-
-            # And for every kernel
-            for index, kernel in enumerate(self.Filters):
-
-                # Append the output of the convolution 
-                self.outputPreBatch.append((self.ConvolutionalSlicer(kernel, matrix, 'Basic_Convolution', 'forward', index)))
-
-            self.output.append(self.outputPreBatch)
-
-        self.output = np.array(self.outputPreBatch, dtype=object)
-
-        self.weights = self.Filters
-        self.biases = self.Biases
-
-    def backward(self, dvalues):
-
-        # Define blank lists to append to
-        self.dweights = []
-        self.dbiases = []
-        self.dinputs = []
-
-        # Gradients on regularization
-        # L1 on weights
-        if self.weight_regularizer_l1 > 0:
-            dL1 = np.ones_like(self.weights)
-            dL1[self.weights < 0] = -1
-            self.dweights += self.weight_regularizer_l1 * dL1
-        # L2 on weights
-        if self.weight_regularizer_l2 > 0:
-            self.dweights += 2 * self.weight_regularizer_l2 * \
-                             self.weights
-        # L1 on biases
-        if self.bias_regularizer_l1 > 0:
-            dL1 = np.ones_like(self.biases)
-            dL1[self.biases < 0] = -1
-            self.dbiases += self.bias_regularizer_l1 * dL1
-        # L2 on biases
-        if self.bias_regularizer_l2 > 0:
-            self.dbiases += 2 * self.bias_regularizer_l2 * \
-                            self.biases
-
-        # Iterate through every output (input on 
-        # the forward pass, since self.output's 
-        # first dimention is the inputs)
-        for i in range(0, self.batch_size):
-
-            # Iterate through every filter index
-            for j in range(0, len(self.Filters)):
-
-                # Get the rotated filter (180 degrees)
-                self.rotated_filter = np.rot90(self.Filters[j], 2)
-
-                # Convolve the gradient with the rotated filter
-                self.dinputs.append(self.ConvolutionalSlicer(self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
-
-                # Append the derivative of the weights at index j
-                self.dweights.append(self.ConvolutionalSlicer(dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
+                self.dweights.append(self.ConvolutionalSlicer(
+                    dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
 
                 self.dbiases.append(sum(dvalues[j]))
 
 # Flatten layer
+
+
 class Layer_Flatten:
 
     # forward
@@ -566,8 +386,8 @@ class Layer_Flatten:
 
         self.dvalues = np.ravel(dvalues)
 
-        # Set dinputs as a 
-        # blank array to be 
+        # Set dinputs as a
+        # blank array to be
         # appended to
         self.dinputs = []
 
@@ -579,8 +399,8 @@ class Layer_Flatten:
         # the forward pass
         for i, shape in enumerate(self.InputShape):
 
-            # Multiply the length by 
-            # hight to find the amount 
+            # Multiply the length by
+            # hight to find the amount
             # of numbers in the input shape
             self.size = np.prod(shape)
 
@@ -596,10 +416,11 @@ class Layer_Flatten:
             # the size of the inputs into the output
             self.dinputsPreReshape = self.dvalues[self.start:self.end]
 
-            self.dinputs.append(self.dinputsPreReshape.reshape(shape[0], shape[1]))
+            self.dinputs.append(
+                self.dinputsPreReshape.reshape(shape[0], shape[1]))
 
-            # Add the amount of numbers 
-            # used to self.start to find 
+            # Add the amount of numbers
+            # used to self.start to find
             # the next starting point
             self.start = self.end
             self.start = int(self.start)
@@ -628,6 +449,8 @@ class Layer_Flatten:
         self.dinputs = np.array(self.summed_inputs, dtype=object)
 
 # Input "layer"
+
+
 class Layer_Input:
 
     # Forward pass
@@ -635,6 +458,8 @@ class Layer_Input:
         self.output = inputs
 
 # ReLU activation
+
+
 class Activation_ReLU:
 
     # Forward pass
@@ -658,6 +483,8 @@ class Activation_ReLU:
         return outputs
 
 # Softmax activation
+
+
 class Activation_Softmax:
 
     # Forward pass
@@ -687,7 +514,7 @@ class Activation_Softmax:
             single_output = single_output.reshape(-1, 1)
             # Calculate Jacobian matrix of the output
             jacobian_matrix = np.diagflat(single_output) - \
-                              np.dot(single_output, single_output.T)
+                np.dot(single_output, single_output.T)
             # Calculate sample-wise gradient
             # and add it to the array of sample gradients
             self.dinputs[index] = np.dot(jacobian_matrix,
@@ -698,6 +525,8 @@ class Activation_Softmax:
         return np.argmax(outputs, axis=1)
 
 # Sigmoid activation
+
+
 class Activation_Sigmoid:
 
     # Forward pass
@@ -717,6 +546,8 @@ class Activation_Sigmoid:
         return (outputs > 0.5) * 1
 
 # Linear activation
+
+
 class Activation_Linear:
 
     # Forward pass
@@ -735,6 +566,8 @@ class Activation_Linear:
         return outputs
 
 # SGD optimizer
+
+
 class Optimizer_SGD:
 
     # Initialize optimizer - set settings,
@@ -783,9 +616,9 @@ class Optimizer_SGD:
         # Vanilla SGD updates (as before momentum update)
         else:
             weight_updates = -self.current_learning_rate * \
-                             layer.dweights
+                layer.dweights
             bias_updates = -self.current_learning_rate * \
-                           layer.dbiases
+                layer.dbiases
 
         # Update weights and biases using either
         # vanilla or momentum updates
@@ -797,6 +630,8 @@ class Optimizer_SGD:
         self.iterations += 1
 
 # Adagrad optimizer
+
+
 class Optimizer_Adagrad:
 
     # Initialize optimizer - set settings
@@ -829,17 +664,19 @@ class Optimizer_Adagrad:
         # Vanilla SGD parameter update + normalization
         # with square rooted cache
         layer.weights += -self.current_learning_rate * \
-                         layer.dweights / \
-                         (np.sqrt(layer.weight_cache) + self.epsilon)
+            layer.dweights / \
+            (np.sqrt(layer.weight_cache) + self.epsilon)
         layer.biases += -self.current_learning_rate * \
-                        layer.dbiases / \
-                        (np.sqrt(layer.bias_cache) + self.epsilon)
+            layer.dbiases / \
+            (np.sqrt(layer.bias_cache) + self.epsilon)
 
     # Call once after any parameter updates
     def post_update_params(self):
         self.iterations += 1
 
-# RMS prop optimizer
+# RMSprop optimizer
+
+
 class Optimizer_RMSprop:
 
     # Initialize optimizer - set settings
@@ -876,17 +713,19 @@ class Optimizer_RMSprop:
         # Vanilla SGD parameter update + normalization
         # with square rooted cache
         layer.weights += -self.current_learning_rate * \
-                         layer.dweights / \
-                         (np.sqrt(layer.weight_cache) + self.epsilon)
+            layer.dweights / \
+            (np.sqrt(layer.weight_cache) + self.epsilon)
         layer.biases += -self.current_learning_rate * \
-                        layer.dbiases / \
-                        (np.sqrt(layer.bias_cache) + self.epsilon)
+            layer.dbiases / \
+            (np.sqrt(layer.bias_cache) + self.epsilon)
 
     # Call once after any parameter updates
     def post_update_params(self):
         self.iterations += 1
 
 # Adam optimizer
+
+
 class Optimizer_Adam:
 
     # Initialize optimizer - set settings
@@ -909,7 +748,7 @@ class Optimizer_Adam:
     # Update fully connected layer parameters
     def update_params(self, layer):
 
-        # If it's not a 
+        # If it's not a
         # convolutional layer
         if not hasattr(layer, 'Filters'):
 
@@ -923,11 +762,11 @@ class Optimizer_Adam:
 
             # Update momentum with current gradients
             layer.weight_momentums = self.beta_1 * \
-                                     layer.weight_momentums + \
-                                     (1 - self.beta_1) * layer.dweights
+                layer.weight_momentums + \
+                (1 - self.beta_1) * layer.dweights
             layer.bias_momentums = self.beta_1 * \
-                                   layer.bias_momentums + \
-                                   (1 - self.beta_1) * layer.dbiases
+                layer.bias_momentums + \
+                (1 - self.beta_1) * layer.dbiases
 
             # Get corrected momentum
             # self.iteration is 0 at first pass
@@ -952,13 +791,13 @@ class Optimizer_Adam:
             # Vanilla SGD parameter update + normalization
             # with square rooted cache
             layer.weights -= self.current_learning_rate * \
-                             weight_momentums_corrected / \
-                             (np.sqrt(weight_cache_corrected) +
-                                 self.epsilon)
+                weight_momentums_corrected / \
+                (np.sqrt(weight_cache_corrected) +
+                 self.epsilon)
             layer.biases -= self.current_learning_rate * \
-                            bias_momentums_corrected / \
-                            (np.sqrt(bias_cache_corrected) +
-                                  self.epsilon)
+                bias_momentums_corrected / \
+                (np.sqrt(bias_cache_corrected) +
+                 self.epsilon)
 
         # If it is a convolutional layer
         else:
@@ -979,47 +818,49 @@ class Optimizer_Adam:
                 for j in range(len(layer.Filters[i])):
                     for k in range(len(layer.Filters[i][j])):
                         layer.weight_momentums[i][j][k] = self.beta_1 * layer.weight_momentums[i][j][k] + \
-                                                      (1 - self.beta_1) * layer.dweights[i][j][k]
+                            (1 - self.beta_1) * layer.dweights[i][j][k]
                 if np.ndim(layer.Biases) > 0:
                     layer.bias_momentums[0][i] = self.beta_1 * layer.bias_momentums[0][i] + \
-                                              (1 - self.beta_1) * layer.dbiases[0][i]
+                        (1 - self.beta_1) * layer.dbiases[0][i]
 
             # Get corrected momentum
             # self.iteration is 0 at first pass and we need to start with 1 here
-            weight_momentums_correctedK = [momentumK / (1 - self.beta_1 ** (self.iterations + 1)) \
-                                         for momentumK in layer.weight_momentums]
+            weight_momentums_correctedK = [momentumK / (1 - self.beta_1 ** (self.iterations + 1))
+                                           for momentumK in layer.weight_momentums]
             if np.ndim(layer.Biases) > 0:
-                bias_momentums_correctedK = [momentumKB / (1 - self.beta_1 ** (self.iterations + 1)) \
-                                            for momentumKB in layer.bias_momentums[0]]
+                bias_momentums_correctedK = [momentumKB / (1 - self.beta_1 ** (self.iterations + 1))
+                                             for momentumKB in layer.bias_momentums[0]]
 
             # Update cache with squared current gradients
             for i in range(len(layer.Filters)):
                 layer.weight_cache[i] = self.beta_2 * layer.weight_cache[i] + \
-                                        (1 - self.beta_2) * layer.dweights[i]**2
+                    (1 - self.beta_2) * layer.dweights[i]**2
                 if np.ndim(layer.Biases) > 0:
                     layer.bias_cache[0][i] = self.beta_2 * layer.bias_cache[0][i] + \
-                                          (1 - self.beta_2) * layer.dbiases[0][i]**2
+                        (1 - self.beta_2) * layer.dbiases[0][i]**2
 
             # Get corrected cache
-            weight_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1)) \
-                                     for cache in layer.weight_cache]
+            weight_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1))
+                                       for cache in layer.weight_cache]
             if np.ndim(layer.Biases) > 0:
-                bias_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1)) \
-                                    for cache in layer.bias_cache[0]]
+                bias_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1))
+                                         for cache in layer.bias_cache[0]]
 
             # Vanilla SGD parameter update + normalization with square rooted cache
             for i in range(len(layer.Filters)):
                 layer.Filters[i] -= self.current_learning_rate * weight_momentums_correctedK[i] / \
-                                        (np.sqrt(weight_cache_correctedK[i]) + self.epsilon)
+                    (np.sqrt(weight_cache_correctedK[i]) + self.epsilon)
                 if np.ndim(layer.Biases) > 0:
                     layer.Biases[0][i] -= self.current_learning_rate * bias_momentums_correctedK[i] / \
-                                           (np.sqrt(bias_cache_correctedK[i]) + self.epsilon)
+                        (np.sqrt(bias_cache_correctedK[i]) + self.epsilon)
 
     # Update convolutional layer parameters
     def post_update_params(self):
         self.iterations += 1
 
 # Common loss class
+
+
 class Loss:
 
     # Regularization loss calculation
@@ -1036,25 +877,25 @@ class Loss:
             # calculate only when factor greater than 0
             if layer.weight_regularizer_l1 > 0:
                 regularization_loss += layer.weight_regularizer_l1 * \
-                                       np.sum(np.abs(layer.weights))
+                    np.sum(np.abs(layer.weights))
 
             # L2 regularization - weights
             if layer.weight_regularizer_l2 > 0:
                 regularization_loss += layer.weight_regularizer_l2 * \
-                                       np.sum(layer.weights * \
-                                              layer.weights)
+                    np.sum(layer.weights *
+                           layer.weights)
 
             # L1 regularization - biases
             # calculate only when factor greater than 0
             if layer.bias_regularizer_l1 > 0:
                 regularization_loss += layer.bias_regularizer_l1 * \
-                                       np.sum(np.abs(layer.biases))
+                    np.sum(np.abs(layer.biases))
 
             # L2 regularization - biases
             if layer.bias_regularizer_l2 > 0:
                 regularization_loss += layer.bias_regularizer_l2 * \
-                                       np.sum(layer.biases * \
-                                              layer.biases)
+                    np.sum(layer.biases *
+                           layer.biases)
 
         return regularization_loss
 
@@ -1102,14 +943,14 @@ class Loss:
         self.accumulated_count = 0
 
 # Cross-entropy loss
+
+
 class Loss_CategoricalCrossentropy(Loss):
 
     # Forward pass
     def forward(self, y_pred, y_true):
         # Number of samples in a batch
         samples = len(y_pred)
-
-
 
         # Clip data to prevent division by 0
         # Clip both sides to not drag mean towards any value
@@ -1154,6 +995,8 @@ class Loss_CategoricalCrossentropy(Loss):
 
 # Softmax classifier - combined Softmax activation
 # and cross-entropy loss for faster backward step
+
+
 class Activation_Softmax_Loss_CategoricalCrossentropy:
 
     # Backward pass
@@ -1175,6 +1018,8 @@ class Activation_Softmax_Loss_CategoricalCrossentropy:
         self.dinputs = self.dinputs / samples
 
 # Binary cross-entropy loss
+
+
 class Loss_BinaryCrossentropy(Loss):
 
     # Forward pass
@@ -1201,7 +1046,6 @@ class Loss_BinaryCrossentropy(Loss):
         # We'll use the first sample to count them
         outputs = len(y_pred[0])
 
-
         # Clip data to prevent division by 0
         # Clip both sides to not drag mean towards any value
         clipped_y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
@@ -1213,6 +1057,8 @@ class Loss_BinaryCrossentropy(Loss):
         self.dinputs = self.dinputs / samples
 
 # Mean Squared Error loss
+
+
 class Loss_MeanSquaredError(Loss):  # L2 loss
 
     # Forward pass
@@ -1239,6 +1085,8 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
         self.dinputs = self.dinputs / samples
 
 # Mean Absolute Error loss
+
+
 class Loss_MeanAbsoluteError(Loss):  # L1 loss
 
     def forward(self, y_pred, y_true):
@@ -1249,9 +1097,8 @@ class Loss_MeanAbsoluteError(Loss):  # L1 loss
         # Return losses
         return sample_losses
 
-
-
     # Backward pass
+
     def backward(self, y_pred, y_true):
 
         # Number of samples
@@ -1266,6 +1113,8 @@ class Loss_MeanAbsoluteError(Loss):  # L1 loss
         self.dinputs = self.dinputs / samples
 
 # Common accuracy class
+
+
 class Accuracy:
 
     # Calculates an accuracy
@@ -1300,6 +1149,8 @@ class Accuracy:
         self.accumulated_count = 0
 
 # Accuracy calculation for classification model
+
+
 class Accuracy_Categorical(Accuracy):
 
     def __init__(self, *, binary=False):
@@ -1317,6 +1168,8 @@ class Accuracy_Categorical(Accuracy):
         return predictions == y
 
 # Accuracy calculation for regression model
+
+
 class Accuracy_Regression(Accuracy):
 
     def __init__(self):
@@ -1334,6 +1187,8 @@ class Accuracy_Regression(Accuracy):
         return np.absolute(predictions - y) < self.precision
 
 # Model class
+
+
 class Model:
 
     # Innitialization
@@ -1347,9 +1202,7 @@ class Model:
     def add(self, layer):
         self.layers.append(layer)
 
-    # Set loss, optimizer and accuracy
-    def set(self, *, loss=None, optimizer=None, accuracy=None):
-
+    def set(self, *, loss=None, optimizer=None, accuracy=None, learning_rate=None, learning_rate_decay=None):
         if loss is not None:
             self.loss = loss
 
@@ -1358,6 +1211,12 @@ class Model:
 
         if accuracy is not None:
             self.accuracy = accuracy
+
+        if learning_rate is not None:
+            self.optimizer.learning_rate = learning_rate
+
+        if learning_rate_decay is not None:
+            self.optimizer.decay = learning_rate_decay
 
     # Finalize the model
     def finalize(self):
@@ -1444,7 +1303,7 @@ class Model:
         for epoch in range(1, epochs+1):
 
             # Print epoch number
-            print(f'epoch: {epoch}')
+            # print(f'epoch: {epoch}')
 
             # Reset accumulated values in loss and accuracy objects
             self.loss.new_pass()
@@ -1475,7 +1334,7 @@ class Model:
 
                 # Get predictions and calculate an accuracy
                 predictions = self.output_layer_activation.predictions(
-                                  output)
+                    output)
                 accuracy = self.accuracy.calculate(predictions,
                                                    batch_y)
 
@@ -1489,13 +1348,13 @@ class Model:
                 self.optimizer.post_update_params()
 
                 # Print a summary
-                if not step % print_every or step == train_steps - 1:
-                    print(f'step: {step}, ' +
-                          f'acc: {accuracy:.3f}, ' +
-                          f'loss: {loss:.3f} (' +
-                          f'data_loss: {data_loss:.3f}, ' +
-                          f'reg_loss: {regularization_loss:.3f}), ' +
-                          f'lr: {self.optimizer.current_learning_rate}')
+                # if not step % print_every or step == train_steps - 1:
+                #    print(f'step: {step}, ' +
+                #          f'acc: {accuracy:.3f}, ' +
+                #          f'loss: {loss:.3f} (' +
+                #          f'data_loss: {data_loss:.3f}, ' +
+                #          f'reg_loss: {regularization_loss:.3f}), ' +
+                #          f'lr: {self.optimizer.current_learning_rate}')
 
             # Get and print epoch loss and accuracy
             epoch_data_loss, epoch_regularization_loss = \
@@ -1504,12 +1363,12 @@ class Model:
             epoch_loss = epoch_data_loss + epoch_regularization_loss
             epoch_accuracy = self.accuracy.calculate_accumulated()
 
-            print(f'training, ' +
-                  f'acc: {epoch_accuracy:.3f}, ' +
-                  f'loss: {epoch_loss:.3f} (' +
-                  f'data_loss: {epoch_data_loss:.3f}, ' +
-                  f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-                  f'lr: {self.optimizer.current_learning_rate}')
+            # print(f'training, ' +
+            #      f'acc: {epoch_accuracy:.3f}, ' +
+            #      f'loss: {epoch_loss:.3f} (' +
+            #      f'data_loss: {epoch_data_loss:.3f}, ' +
+            #      f'reg_loss: {epoch_regularization_loss:.3f}), ' +
+            #      f'lr: {self.optimizer.current_learning_rate}')
 
             # If there is the validation data
             if validation_data is not None:
@@ -1538,7 +1397,6 @@ class Model:
         self.loss.new_pass()
         self.accuracy.new_pass()
 
-
         # Iterate over steps
         for step in range(validation_steps):
 
@@ -1565,7 +1423,7 @@ class Model:
 
             # Get predictions and calculate an accuracy
             predictions = self.output_layer_activation.predictions(
-                              output)
+                output)
             self.accuracy.calculate(predictions, batch_y)
 
         # Get and print validation loss and accuracy
@@ -1586,7 +1444,6 @@ class Model:
         # Calculate number of steps
         if batch_size is not None:
             prediction_steps = len(X) // batch_size
-
 
             # Dividing rounds down. If there are some remaining
             # data but not a full batch, this won't include it
@@ -1734,8 +1591,8 @@ class Model:
         with open(path, 'wb') as f:
             pickle.dump(model, f)
 
-
     # Loads and returns a model
+
     @staticmethod
     def load(path):
 
@@ -1746,8 +1603,517 @@ class Model:
         # Return a model
         return model
 
+# Beyesian Optimizer
+
+
+class BayesianOptimizer(ABC):
+    def __init__(self, model=False):
+        kernel = Matern(length_scale_bounds=(1e-06, 1.0))
+        self.model = GaussianProcessRegressor(kernel=kernel)
+        if model:
+            joblib.dump(self.model, 'my_model.joblib')
+
+    def set(self, model, names=None, xi=0.01, kappa=2.576):
+        self.evaluation_function = model.train
+        self.Model = model
+        self.xi = xi
+        self.kappa = kappa
+        self.names = names
+
+    def predict(self, x):
+        return self.model.predict(x)
+
+    def check_bounds(self, bounds):
+        for i, (lower, upper) in enumerate(bounds):
+            if lower > upper:
+                print(
+                    f"Bounds error: Lower bound ({lower}) is greater than upper bound ({upper}) at index {i}")
+                return False
+        return True
+
+    def set_deep_q_network_params(self, param_names, param_values):
+        if len(self.names) != len(param_values):
+            raise ValueError(
+                "Length of param_names and param_values must be equal.")
+
+        param_dict = dict(zip(param_names, param_values))
+
+        if 'MaxMemoryLength' in param_dict:
+            param_dict['MaxMemoryLength'] = int(
+                round(param_dict['MaxMemoryLength']))
+
+        self.Model.set(**param_dict)
+
+    def generate_initial_data(self, n_samples, bounds, names, seed=None, save_every=None, X=True, y=True, TotalSamples=0, training_iterations=0):
+        if TotalSamples == 0:
+            TotalSamples == n_samples
+        self.names = names
+        if seed is not None:
+            np.random.seed(seed)
+
+        self.n_hyperparameters = len(bounds)
+        if X:
+            X_original = np.random.rand(n_samples, self.n_hyperparameters)
+            X_modified = X_original.copy()
+            self.X = X_modified
+        if y:
+            self.y = []
+        if X:
+            for i, (lower, upper) in enumerate(bounds):
+                self.X[:, i] = self.X[:, i] * (upper - lower) + lower
+
+        for i in range(n_samples):
+            print(f"Sample: {i + 1}")
+            self.set_deep_q_network_params(
+                self.names, self.X[i + (TotalSamples - n_samples)])
+            self.y.append(self.evaluation_function(
+                Plot=False, Start=True, OF=True))
+
+            if save_every is not None and (i+1) % save_every == 0:
+                self.save_progress_to_file(
+                    self.y, n_samples - (i+1), training_iterations, False)
+
+        return self.X, self.y
+
+    def maximize(self, n_iter, X, y, bounds, save_every=None, model=False):
+        if not model:
+            self.model.fit(X, y)
+        for i in range(n_iter):
+            print(f"Point: {i + 1}")
+            self.next_point = self._acquisition_function(X, y, bounds)
+            self.set_deep_q_network_params(self.names, self.next_point)
+            self.y_new = self.evaluation_function(
+                Plot=False, Start=True, OF=True)
+            self.X = np.vstack([self.X, self.next_point])
+            self.y = np.append(self.y, self.y_new)
+            self.model.fit(self.X, self.y)
+
+            if save_every is not None and (i+1) % save_every == 0:
+                self.save_progress_to_file(self.y, 0, n_iter - (i+1), True)
+
+        max_index = np.argmax(y)
+        return X[max_index], y[max_index]
+
+    @abstractmethod
+    def _acquisition_function(self, X, y, bounds):
+        pass
+
+    def save_progress_to_file(self, y, remaining_init_data_iters, remaining_max_iters, model=False):
+        np.savetxt('hyperparameters.txt', self.X)
+        np.savetxt('scores.txt', y)
+        if model:
+            joblib.dump(self.model, 'my_model.joblib')
+
+        remaining_iters = {
+            'remaining_init_data_iters': remaining_init_data_iters,
+            'remaining_max_iters': remaining_max_iters
+        }
+        with open('remaining_iters.json', 'w') as f:
+            json.dump(remaining_iters, f)
+
+    def save_parameters_to_file(self, params):
+        with open('train_parameters.json', 'w') as f:
+            json.dump(params, f)
+
+    def load_parameters_from_file(self):
+        with open('train_parameters.json', 'r') as f:
+            return json.load(f)
+
+    def pickup_training(self, model=True):
+        train_params = self.load_parameters_from_file()
+        self.X = np.loadtxt('hyperparameters.txt')
+        self.y = np.loadtxt('scores.txt')
+        if model:
+            self.model = GaussianProcessRegressor(kernel=Matern())
+            self.model.fit(self.X, self.y)
+
+        with open('remaining_iters.json', 'r') as f:
+            remaining_iters = json.load(f)
+
+        remaining_init_data_iters = remaining_iters['remaining_init_data_iters']
+        remaining_max_iters = remaining_iters['remaining_max_iters']
+
+        initial_samples = train_params['initial_samples']
+        training_iterations = train_params['training_iterations']
+        selected_hyperparameters = train_params['selected_hyperparameters']
+        RegisterTime = train_params['RegisterTime']
+        ReturnTime = train_params['ReturnTime']
+        ReturnHP = train_params['ReturnHP']
+        save_every = train_params['save_every']
+
+        all_hyperparameter_ranges = All_Hyperparameter_Ranges_Create()
+        filtered_hyperparameter_ranges = {
+            key: value for key, value in all_hyperparameter_ranges.items()
+            if key in selected_hyperparameters
+        }
+
+        HP_Ranges = [value for key,
+                     value in filtered_hyperparameter_ranges.items()]
+        HP_Names = [key for key in filtered_hyperparameter_ranges.keys()]
+        HP_Dict = filtered_hyperparameter_ranges
+
+        HP_Range_Flipped = flip_bounds(HP_Ranges)
+
+        self.names = HP_Names
+
+        if remaining_init_data_iters is not None and remaining_init_data_iters > 0:
+            self.X, self.y = self.generate_initial_data(remaining_init_data_iters, HP_Ranges, self.names, save_every=save_every, X=False,
+                                                        y=False, TotalSamples=initial_samples, training_iterations=training_iterations)
+
+        if remaining_max_iters is not None and remaining_max_iters > 0:
+            best_hyperparameters, best_objective = self.maximize(
+                remaining_max_iters, self.X, self.y, HP_Range_Flipped, save_every=save_every, model=True)
+        else:
+            max_index = np.argmax(self.y)
+            best_hyperparameters, best_objective = self.X[max_index], self.y[max_index]
+
+        if ReturnHP == 3:
+            if ReturnTime:
+                return start, mid, end, HP_Names, HP_Ranges, HP_Dict, best_hyperparameters, best_objective
+            return HP_Names, HP_Ranges, HP_Dict, best_hyperparameters, best_objective
+        elif ReturnHP == 2:
+            if ReturnTime:
+                return start, mid, end, HP_Names, HP_Ranges, best_hyperparameters, best_objective
+            return HP_Names, HP_Ranges, best_hyperparameters, best_objective
+        elif ReturnHP == 1:
+            if ReturnTime:
+                return start, mid, end, HP_Names, best_hyperparameters, best_objective
+            return HP_Names, best_hyperparameters, best_objective
+        elif ReturnHP == 0:
+            if ReturnTime:
+                return start, mid, end, best_hyperparameters, best_objective
+            return best_hyperparameters, best_objective
+
+    def train(self, initial_samples, training_iterations, selected_hyperparameters, RegisterTime=False, ReturnTime=False, ReturnHP=1, save_every=None, TotalSamples=0):
+
+        if not RegisterTime:
+            ReturnTime = False
+
+        all_hyperparameter_ranges = All_Hyperparameter_Ranges_Create()
+
+        filtered_hyperparameter_ranges = {
+            key: value for key, value in all_hyperparameter_ranges.items()
+            if key in selected_hyperparameters
+        }
+
+        HP_Ranges = [value for key,
+                     value in filtered_hyperparameter_ranges.items()]
+        HP_Names = [key for key in filtered_hyperparameter_ranges.keys()]
+        HP_Dict = filtered_hyperparameter_ranges
+
+        self.names = HP_Names
+
+        HP_Range_Flipped = flip_bounds(HP_Ranges)
+
+        # Save the train method parameters
+        train_params = {
+            'initial_samples': initial_samples,
+            'training_iterations': training_iterations,
+            'selected_hyperparameters': selected_hyperparameters,
+            'RegisterTime': RegisterTime,
+            'ReturnTime': ReturnTime,
+            'ReturnHP': ReturnHP,
+            'save_every': save_every
+        }
+        self.save_parameters_to_file(train_params)
+
+        # Generate initial data and maximize
+        if RegisterTime:
+            start = time.time()
+        self.X, self.y = self.generate_initial_data(initial_samples, HP_Ranges, self.names, save_every=save_every, X=True,
+                                                    y=True, TotalSamples=TotalSamples, training_iterations=training_iterations)
+        if RegisterTime:
+            mid = time.time()
+        best_hyperparameters, best_objective = self.maximize(
+            training_iterations, self.X, self.y, HP_Range_Flipped, save_every=save_every, model=False)
+        if RegisterTime:
+            end = time.time()
+
+        if RegisterTime:
+            print(
+                f"Start to Mid: {mid - start}, Mid to End: {end - mid}, Full Program: {end - start}")
+
+        if ReturnHP == 3:
+            if ReturnTime:
+                return start, mid, end, HP_Names, HP_Ranges, HP_Dict, best_hyperparameters, best_objective
+            return HP_Names, HP_Ranges, HP_Dict, best_hyperparameters, best_objective
+        elif ReturnHP == 2:
+            if ReturnTime:
+                return start, mid, end, HP_Names, HP_Ranges, best_hyperparameters, best_objective
+            return HP_Names, HP_Ranges, best_hyperparameters, best_objective
+        elif ReturnHP == 1:
+            if ReturnTime:
+                return start, mid, end, HP_Names, best_hyperparameters, best_objective
+            return HP_Names, best_hyperparameters, best_objective
+        elif ReturnHP == 0:
+            if ReturnTime:
+                return start, mid, end, best_hyperparameters, best_objective
+            return best_hyperparameters, best_objective
+
+# Probability improvement (PI) aquisition function
+
+
+class ProbabilityImprovement(BayesianOptimizer):
+    # Child class for Probability of Improvement (PI) acquisition function.
+    def _acquisition_function(self, X, y, bounds):
+        def neg_pi(x):
+            mu, sigma = self.model.predict(x.reshape(1, -1))
+            best_y = np.max(y)
+            Z = (mu - best_y - self.xi) / sigma
+            PI = norm.cdf(Z)
+            return -PI
+
+        res = minimize(neg_pi, X[np.argmax(y)], bounds=bounds)
+        return res.x
+
+# Expected improvement (PI) aquisition function
+
+
+class ExpectedImprovement(BayesianOptimizer):
+    # Child class for Expected Improvement (EI) acquisition function.
+    def _acquisition_function(self, X, y, bounds):
+        if not self.check_bounds(bounds):
+            raise ValueError("Invalid bounds provided.")
+
+        def neg_ei(x):
+            mu, sigma = self.model.predict(x.reshape(1, -1), return_std=True)
+            best_y = np.max(y)
+            Z = (mu - best_y - self.xi) / sigma
+            EI = (mu - best_y - self.xi) * norm.cdf(Z) + sigma * norm.pdf(Z)
+            return -EI
+
+        res = minimize(neg_ei, X[np.argmax(y)], bounds=bounds)
+        return res.x
+
+# Upper confidence bound (UCB) aquisition function
+
+
+class UpperConfidenceBound(BayesianOptimizer):
+    # Child class for Upper Confidence Bound (UCB) acquisition function.
+    def _acquisition_function(self, X, y, bounds):
+        def neg_ucb(x):
+            mu, sigma = self.model.predict(x.reshape(1, -1))
+            UCB = mu + self.kappa * sigma
+            return -UCB
+
+        res = minimize(neg_ucb, X[np.argmax(y)], bounds=bounds)
+        return res.x
+
+# Deep Q-learning Agent
+
+
+class DQNAgent:
+
+    def set(self, state_size=None, action_size=None, episodes=None, batch_size=None, MaxMemoryLength=None,
+            gamma=None, Agent_Learning_Rate=None, Agent_Learning_Rate_Min=None, Agent_Learning_Rate_Decay=None,
+            epsilon=None, epsilon_min=None, epsilon_decay=None, model=None, learning_rate=None, learning_rate_decay=None):
+        if state_size:
+            self.state_size = state_size
+        if action_size:
+            self.action_size = action_size
+        if MaxMemoryLength:
+            self.memory = deque(maxlen=MaxMemoryLength)
+        if gamma:
+            self.gamma = gamma    # discount rate
+        if epsilon:
+            self.epsilon = epsilon  # exploration rate
+        if epsilon_min:
+            self.epsilon_min = epsilon_min
+        if epsilon_decay:
+            self.epsilon_decay = epsilon_decay
+        if Agent_Learning_Rate:
+            self.learning_rate = Agent_Learning_Rate
+        if Agent_Learning_Rate_Min:
+            self.learning_rate_min = Agent_Learning_Rate_Min
+        if Agent_Learning_Rate_Decay:
+            self.learning_rate_decay = Agent_Learning_Rate_Decay
+        if episodes:
+            self.episodes = episodes
+        if batch_size:
+            self.batch_size = batch_size
+        if model:
+            self.model = model
+
+        if learning_rate and learning_rate_decay:
+
+            model.set(
+                optimizer=Optimizer_Adam(
+                    learning_rate=learning_rate, decay=learning_rate_decay)
+            )
+
+        elif learning_rate:
+
+            model.set(
+                optimizer=Optimizer_Adam(learning_rate=learning_rate)
+            )
+
+        elif learning_rate_decay:
+
+            model.set(
+                optimizer=Optimizer_Adam(decay=learning_rate_decay)
+            )
+
+    def memorize(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def act(self, state):
+        if np.random.rand() <= self.epsilon:
+            return random.randrange(self.action_size)
+        act_values = self.model.predict(state)
+        return np.argmax(act_values[0])  # returns action
+
+    def replay(self, batch_size, episode):
+        minibatch = random.sample(self.memory, batch_size)
+
+        for state, action, reward, next_state, done in minibatch:
+            target = reward
+            if not done:
+                target = reward + self.gamma * \
+                    np.max(self.model.predict(next_state)[0])
+            target_f = self.model.predict(state)
+            target_f[0][action] = target
+            self.model.train(np.reshape(
+                state, [1, state_size]), target_f, epochs=1, print_every=100)
+        if self.epsilon > self.epsilon_min and self.epsilon_decay:
+            self.epsilon = self.epsilon * \
+                (1 / (1 + self.epsilon_decay * episode))
+        if self.learning_rate > self.learning_rate_min and self.learning_rate_decay:
+            self.learning_rate = self.learning_rate * \
+                (1 / (1 + self.learning_rate_decay * episode))
+
+    def start(self, batch_size):
+
+        # Iterate the game
+        for e in range(batch_size):
+
+            # reset state in the beginning of each game
+            state = env.reset()[0]
+            state = np.reshape(state, state_size)
+
+            # time_t represents each frame of the game
+            # Our goal is to keep the pole upright as long as possible until score of 500
+            # the more time_t the more score
+            for time_t in range(500):
+                # turn this on if you want to render
+                # env.render()
+
+                # Decide action
+                action = agent.act(state)
+
+                # Advance the game to the next frame based on the action.
+                # Reward is 1 for every frame the pole survived
+                next_state, reward, done, _, _ = env.step(action)
+                next_state = np.reshape(next_state, state_size)
+
+                # memorize the previous state, action, reward, and done
+                agent.memorize(state, action, reward, next_state, done)
+
+                # make next_state the new current state for the next frame.
+                state = next_state
+
+    def train(self, Plot=True, Start=True, OF=False, ListHP=False):
+
+        if ListHP:
+            print(
+                f"state_size: {self.state_size:.0f}, action_size: {self.action_size:.0f}, episodes: {self.episodes:.0f},")
+            print(
+                f"batch_size: {self.batch_size:.0f}, MaxMemoryLength: 5000, gamma: {self.gamma:.2f}, Agent_Learning_Rate: {self.learning_rate:.4f},")
+            print(
+                f"Agent_Learning_Rate_Min: {self.learning_rate_min:.4f}, Agent_Learning_Rate_Decay: {self.learning_rate_decay:.4f},")
+            print(
+                f"epsilon: {self.epsilon:.4f}, epsilon_min: {self.epsilon_min:.4f}, epsilon_decay: {self.epsilon_decay:.4f},")
+            print(
+                f"learning_rate: {model.optimizer.learning_rate:.4f}, learning_rate_decay: {model.optimizer.decay:.4f}")
+
+        if Plot or OF:
+            PlotDictionary = {'ep': [], 'avg': [],
+                              'max': [], 'min': [], 'eps': []}
+
+        if Start:
+            self.start(self.batch_size)
+
+        overall_rewards = []
+
+        # Iterate the game
+        for e in range(self.episodes):
+
+            if Plot:
+                PlotDictionary['ep'].append(e + 1)
+
+            ep_reward = 0
+
+            # reset state in the beginning of each game
+            state = env.reset()[0]
+            state = np.reshape(state, state_size)
+
+            # time_t represents each frame of the game
+            # Our goal is to keep the pole upright as long as possible until score of 500
+            # the more time_t the more score
+            for time_t in range(500):
+
+                if Plot == True:
+                    AvgList = []
+
+                # turn this on if you want to render
+                # env.render()
+
+                # Decide action
+                action = agent.act(state)
+
+                # Advance the game to the next frame based on the action.
+                # Reward is 1 for every frame the pole survived
+                next_state, reward, done, _, _ = env.step(action)
+
+                ep_reward += reward
+
+                next_state = np.reshape(next_state, state_size)
+
+                # memorize the previous state, action, reward, and done
+                agent.memorize(state, action, reward, next_state, done)
+
+                # make next_state the new current state for the next frame.
+                state = next_state
+
+                # done becomes True when the game ends
+                # ex) The agent drops the pole
+                if done:
+                    if (e + 1) % 200 == 0:
+                        # print the score and break out of the loop
+                        print(
+                            f"	episode: {e + 1}/{episodes}, score: {time_t + 1}, epsilon: {round(self.epsilon, 2)}, self LR: {round(self.learning_rate, 4)}, NN LR: {model.optimizer.learning_rate}")
+                    overall_rewards.append(ep_reward + 1)
+                    env.reset()
+                    break
+
+            if Plot or OF:
+                if not len(overall_rewards) > 0:
+                    overall_rewards.append(1)
+                PlotDictionary['avg'].append(statistics.mean(overall_rewards))
+                PlotDictionary['min'].append(min(overall_rewards))
+                PlotDictionary['max'].append(max(overall_rewards))
+                PlotDictionary['eps'].append(self.epsilon * 250)
+
+            # train the agent with the experience of the episode
+            agent.replay(self.batch_size, e)
+        if Plot:
+            plt.plot(PlotDictionary['ep'], PlotDictionary['avg'], label="avg")
+            plt.plot(PlotDictionary['ep'], PlotDictionary['min'], label="min")
+            plt.plot(PlotDictionary['ep'], PlotDictionary['max'], label="max")
+            plt.plot(PlotDictionary['ep'],
+                     PlotDictionary['eps'], label="epsilon")
+            plt.legend(loc=4)
+            plt.show()
+
+        if OF:
+            return PlotDictionary['avg'][-1]
+
+    def predict(state):
+        return self.act(state)
+
 # Loads a MNIST dataset
-def load_mnist_dataset(dataset, path):
+
+
+def Load_MNIST_Dataset(dataset, path):
 
     # Scan all the directories and create a list of labels
     labels = os.listdir(os.path.join(path, dataset))
@@ -1762,8 +2128,8 @@ def load_mnist_dataset(dataset, path):
         for file in os.listdir(os.path.join(path, dataset, label)):
             # Read the image
             image = cv2.imread(
-                        os.path.join(path, dataset, label, file),
-                        cv2.IMREAD_UNCHANGED)
+                os.path.join(path, dataset, label, file),
+                cv2.IMREAD_UNCHANGED)
 
             # And append it and a label to the lists
             X.append(image)
@@ -1773,7 +2139,9 @@ def load_mnist_dataset(dataset, path):
     return np.array(X), np.array(y).astype('uint8')
 
 # MNIST dataset (train + test)
-def create_data_mnist(path):
+
+
+def Create_Data_MNIST(path):
 
     # Load both sets separately
     X, y = load_mnist_dataset('train', path)
@@ -1783,6 +2151,8 @@ def create_data_mnist(path):
     return X, y, X_test, y_test
 
 # Create filters
+
+
 def Create_Filters(Shapes, Low=0, High=1, Biases=False, BiasLow=-1, BiasHigh=1):
 
     RandomFilters = []
@@ -1803,219 +2173,147 @@ def Create_Filters(Shapes, Low=0, High=1, Biases=False, BiasLow=-1, BiasHigh=1):
 
         return RandomFilters, RandomBiases
 
-# Innitiate and play chess game
-def play_game(stockfish_path):
-    board = chess.Board()
+# define public hyperparamater ranges
 
-    with chess.engine.SimpleEngine.popen_uci(stockfish_path) as engine:
-        while not board.is_game_over():
-            result = engine.play(board, chess.engine.Limit(time=0.01))
-            board.push(result.move)
 
-    return board.move_stack
-
-# Memorize the game
-def memoize(f):
-    memo = {}
-    def helper(board_fen, stockfish_path, limit):
-        if board_fen not in memo:            
-            memo[board_fen] = f(board_fen, stockfish_path, limit)
-        return memo[board_fen]
-    return helper
-
-@memoize # Analyze the game
-def analyze_board(board_fen, stockfish_path, limit):
-    with chess.engine.SimpleEngine.popen_uci(stockfish_path) as engine:
-        board = chess.Board(board_fen)
-        return engine.analyse(board, limit)["score"].relative.score()
-
-# Get X amount of positions from a given game
-def sample_positions(stockfish_path, move_stack, num_samples):
-    fens = []
-    turn_list = []
-    evaluations = []
-
-    for _ in range(num_samples):
-        board = chess.Board()
-        num_moves = random.randint(1, len(move_stack) - 1)
-        for move in move_stack[:num_moves]:
-            board.push(move)
-
-        fen = board.fen()
-        turn = board.turn
-        evaluation = analyze_board(fen, stockfish_path, chess.engine.Limit(time=0.01))
-
-        fens.append(fen)
-        turn_list.append(turn)
-        evaluations.append(evaluation)
-
-    return fens, turn_list, evaluations
-
-# Play a single game, get the 
-# board positions from the games
-def generate_single_game(stockfish_path, num_samples_per_game):
-    move_stack = None
-    while not move_stack or len(move_stack) < num_samples_per_game:
-        move_stack = play_game(stockfish_path)
-    return sample_positions(stockfish_path, move_stack, num_samples_per_game)
-
-# Global loop to get a list of batches 
-# for the Neural Network training data
-def GenerateRandomBoards(stockfish_path, num_games, num_samples_per_game):
-    all_fens = []
-    all_turns = []
-    all_evaluations = []
-
-    input_list = [(stockfish_path, num_samples_per_game) for _ in range(num_games)]
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(lambda x: generate_single_game(*x), input_list))
-
-    for fens, turns, evaluations in results:
-        all_fens.append(fens)
-        all_turns.append(turns)
-        all_evaluations.append(evaluations)
-
-    return all_fens, all_turns, all_evaluations
-
-# Convert FEN data to matrix data
-# usable by the Convolutional layer
-def fen_to_matrix(fen):
-    piece_values = {
-        ".": 0, "P": 1, "N": 2, "B": 3, "R": 4, "Q": 5, "K": 6,
-        "p": -1, "n": -2, "b": -3, "r": -4, "q": -5, "k": -6,
-    }
-    fen_parts = fen.split(" ")
-    board_data = fen_parts[0].split("/")
-    matrix = []
-
-    for row in board_data:
-        matrix_row = []
-        for char in row:
-            if char.isdigit():
-                matrix_row.extend([0] * int(char))
-            else:
-                matrix_row.append(piece_values.get(char, 0)) # Use .get() method to avoid KeyError
-        matrix.append(matrix_row)
-    return matrix
-
-# Convert matrix data to FEN data 
-# for personal use and debugging
-def matrix_to_fen(board_matrix):
-
-    piece_map = {
-        0: ".", 1: "P", 2: "N", 3: "B", 4: "R", 5: "Q", 6: "K",
-        -1: "p", -2: "n", -3: "b", -4: "r", -5: "q", -6: "k",
+def All_Hyperparameter_Ranges_Create():
+    return {
+        'Agent_Learning_Rate': (0.1, 0.0001),
+        'Agent_Learning_Rate_Min': (0.001, 0.00001),
+        'Agent_Learning_Rate_Decay': (0.01, 0.00001),
+        'gamma': (0.99, 0.5),
+        'epsilon': (1.0, 0.1),
+        'epsilon_min': (0.1, 0.01),
+        'epsilon_decay': (0.01, 0.0001),
+        'learning_rate': (0.1, 0.0001),
+        'learning_rate_decay': (0.01, 0.0001),
+        'batch_size': (2048, 32),
+        'MaxMemoryLength': (100000, 1000),
+        'Episodes': (10000, 10),
+        'Epochs': (100, 1),
     }
 
-    def piece_char(value):
-        return piece_map.get(value, '.')
+# Create, save, and load hyperparameter ranges
 
-    def compress_row(row):
-        compressed_row = []
-        count = 0
-        for char in row:
-            if char == ".":
-                count += 1
-            else:
-                if count > 0:
-                    compressed_row.append(str(count))
-                    count = 0
-                compressed_row.append(char)
-        if count > 0:
-            compressed_row.append(str(count))
-        return "".join(compressed_row)
 
-    rows = ["".join(piece_char(value) for value in row) for row in board_matrix]
-    compressed_rows = [compress_row(row) for row in rows]
-    fen_parts = "/".join(compressed_rows)
+def Handle_Hyperparameter_Ranges(path='filtered_hyperparameter_ranges.json', action=None, dictionary=False, **kwargs):
+    all_hyperparameter_ranges = {
+        'Agent_Learning_Rate': (0.1, 0.0001),
+        'Agent_Learning_Rate_Min': (0.001, 0.00001),
+        'Agent_Learning_Rate_Decay': (0.01, 0.00001),
+        'gamma': (0.99, 0.5),
+        'epsilon': (1.0, 0.1),
+        'epsilon_min': (0.1, 0.01),
+        'epsilon_decay': (0.01, 0.0001),
+        'learning_rate': (0.1, 0.0001),
+        'learning_rate_decay': (0.01, 0.0001),
+        'batch_size': (2048, 32),
+        'MaxMemoryLength': (100000, 1000),
+        'Episodes': (10000, 10),
+        'Epochs': (100, 1),
+    }
 
-    return fen_parts
+    selected_hyperparameters = kwargs.get('selected_hyperparameters', [])
 
-# Class to take in either a matrix 
-# or a FEN and convert it to the opposite
-def FenPackage_TAF_MatrixPackage(Package, PackageState, OtherDataPackageLocal, other_data=False):
-    if other_data == True and type(Package[0][0]) == str:
-        for i, inner_list in enumerate(Package):
-            for j, string in enumerate(inner_list):
-                split_string = string.split(" ", 1)
-                Package[i][j] = split_string[0]
-                OtherDataPackageLocal[i][j] = split_string[1]
-        
+    # Filter the dictionary based on the provided list of strings in kwargs
+    filtered_hyperparameter_ranges = {
+        key: value for key, value in all_hyperparameter_ranges.items()
+        if key in selected_hyperparameters
+    }
 
-    if PackageState == 'FEN':
+    if action == 'load':
+        # Load and return the saved hyperparameters
+        with open(path, "r") as infile:
+            loaded_data = json.load(infile)
+        loaded_hyperparameters_tuples = [
+            tuple(t) for t in loaded_data['tuples']]
+        loaded_hyperparameters_names = loaded_data['names']
+        if dictionary:
+            loaded_hyperparameters_dict = {name: tuple(t) for name, t in zip(
+                loaded_hyperparameters_names, loaded_hyperparameters_tuples)}
+            return loaded_hyperparameters_tuples, loaded_hyperparameters_names, loaded_hyperparameters_dict
+        return loaded_hyperparameters_tuples, loaded_hyperparameters_names
 
-        for i in range(len(Package)):
+    # If action is None or 'save', create the lists of filtered hyperparameter tuples and names
+    filtered_hyperparameters_tuples = [
+        tuple(t) for t in filtered_hyperparameter_ranges.values()]
+    filtered_hyperparameters_names = list(
+        filtered_hyperparameter_ranges.keys())
 
-            matrices_per_game = []
+    if action == 'save':
+        # Save the filtered hyperparameter tuples and names as a JSON file at the given 'path'
+        data_to_save = {
+            'tuples': [list(t) for t in filtered_hyperparameters_tuples],
+            'names': filtered_hyperparameters_names
+        }
+        if dictionary:
+            data_to_save['dictionary'] = {name: list(t) for name, t in zip(
+                filtered_hyperparameters_names, filtered_hyperparameters_tuples)}
+        with open(path, "w") as outfile:
+            json.dump(data_to_save, outfile)
 
-            for fen in Package[i]:
+    # If action is None, return the filtered hyperparameter tuples, names, and optionally, the dictionary
+    if dictionary:
+        filtered_hyperparameters_dict = {name: tuple(t) for name, t in zip(
+            filtered_hyperparameters_names, filtered_hyperparameters_tuples)}
+        return filtered_hyperparameters_tuples, filtered_hyperparameters_names, filtered_hyperparameters_dict
+    return filtered_hyperparameters_tuples, filtered_hyperparameters_names
 
-                matrix = fen_to_matrix(fen)
-                matrices_per_game.append(matrix)
+# Order hyperparameters
 
-            Package[i] = matrices_per_game
 
-    elif PackageState == 'Matrix':
+def Order_Hyperparameters(path=None, **kwargs):
+    all_hyperparameter_ranges = {
+        'Agent_Learning_Rate': (0.1, 0.0001),
+        'Agent_Learning_Rate_Min': (0.001, 0.00001),
+        'Agent_Learning_Rate_Decay': (0.01, 0.00001),
+        'gamma': (0.99, 0.5),
+        'epsilon': (1.0, 0.1),
+        'epsilon_min': (0.1, 0.01),
+        'epsilon_decay': (0.01, 0.0001),
+        'learning_rate': (0.1, 0.0001),
+        'learning_rate_decay': (0.01, 0.0001),
+        'batch_size': (2048, 32),
+        'MaxMemoryLength': (100000, 1000),
+        'Episodes': (10000, 10),
+        'Epochs': (100, 1),
+    }
 
-        for i in range(len(Package)):
-
-            for j in range(len(Package[0])):
-
-                Package[i][j] = matrix_to_fen(Package[i][j])
-
-    if other_data == True and PackageState == 'FEN':
-
-        return Package, OtherDataPackageLocal
-
-    elif other_data == True and PackageState == 'Matrix':
-        for i in range(len(Package)):
-            for j in range(len(Package[0])):
-                Package[i][j] = f'{Package[i][j]} {OtherDataPackageLocal[i][j]}'
-        return Package
+    if path:
+        with open(path, "r") as infile:
+            data = json.load(infile)
     else:
-        return Package
+        data = kwargs
 
-# Create dataset
-X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
+    ordered_tuples = []
+    ordered_names = []
+    ordered_dicts = {}
 
-X = (X.astype(np.float32) - 127.5) / 127.5
-X_test = (X_test.astype(np.float32) - 127.5) / 127.5
+    for key in all_hyperparameter_ranges:
+        if key in data.get('names', []):
+            index = data['names'].index(key)
+            ordered_tuples.append(tuple(data['tuples'][index]))
+            ordered_names.append(key)
+        if key in data.get('dictionary', {}):
+            ordered_dicts[key] = data['dictionary'][key]
 
-# Shuffle the training dataset
-keys = np.array(range(X.shape[0]))
-np.random.shuffle(keys)
-X = X[keys]
-y = y[keys]
+    output = [ordered_tuples, ordered_names, ordered_dicts]
+    return tuple(output)
 
-# Instantiate the model
-model = Model()
+# Create Kwargs
 
-Shapes = [[6, 6], [10, 10], [14, 14]]
 
-FiltersToBePassed, BiasesToBePassed = Create_Filters(Shapes, 0, 1, True)
+def Create_Kwargs(variable_list):
+    kwargs = {}
+    key_names = ['tuples', 'names', 'dictionary']
+    for i, var in enumerate(variable_list):
+        key = key_names[i] if i < len(key_names) else f'arg{i}'
+        kwargs[key] = var
+    return kwargs
 
-# Add layers
-model.add(Basic_Convolution(FiltersToBePassed, 0, BiasesToBePassed, True, True))
-model.add(Layer_Flatten())
-model.add(Activation_ReLU())
-model.add(Layer_Dense(1115, 128))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 128))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 10))
-model.add(Activation_Softmax())
+# Flip bounds
 
-# Set loss, optimizer and accuracy objects
-model.set(
-    loss=Loss_CategoricalCrossentropy(),
-    optimizer=Optimizer_Adam(learning_rate=0.01, decay=1e-3),
-    accuracy=Accuracy_Categorical()
-)
 
-# Finalize the model
-model.finalize()
-
-# Train the model
-model.train(X, y, validation_data=(X_test, y_test),
-            epochs=1, batch_size=128, print_every=10)
+def flip_bounds(HP_Range):
+    flipped_HP_Range = [(upper, lower) for lower, upper in HP_Range]
+    return flipped_HP_Range

@@ -2141,7 +2141,7 @@ class DQNAgent:
 				# make next_state the new current state for the next frame.
 				state = next_state
 
-	def train(self, Plot=True, Start=True, OF=False, ListHP=False):
+	def train(self, Plot=True, Start=True, OF=False, ListHP=False, Save=False):
 
 		if ListHP:
 			print(f"state_size: {self.state_size:.0f}, action_size: {self.action_size:.0f}, episodes: {self.episodes:.0f},")
@@ -2218,6 +2218,11 @@ class DQNAgent:
 
 			# train the agent with the experience of the episode
 			agent.replay(self.batch_size, e)
+
+			if Save==True:
+				with open('DQNAgent_Model', "wb") as f:
+					pickle.dump(self.model, f)
+
 		if Plot:
 			plt.plot(PlotDictionary['ep'], PlotDictionary['avg'], label="avg")
 			plt.plot(PlotDictionary['ep'], PlotDictionary['min'], label="min")
@@ -2430,19 +2435,19 @@ env = gym.make('CartPole-v1', disable_env_checker=True)
 env.reset()
 
 batch_size = 32
-episodes = 1000
+episodes = 100000
 
 state_size = env.observation_space.shape[0]
 action_size = int(env.action_space.n)
 
 MaxMemoryLength = 5000
-Agent_Learning_Rate = 0.005
-Agent_Learning_Rate_Min = 1e-4
-Agent_Learning_Rate_Decay = 1e-3
-gamma = 0.995
-epsilon = 1.0
-epsilon_min = 0.01
-epsilon_decay = 1e-4
+Agent_Learning_Rate = 9.29078533e-02
+Agent_Learning_Rate_Min = 2.94616994e-04
+Agent_Learning_Rate_Decay = 3.17568731e-03
+gamma = 6.44778843e-01
+epsilon = 6.87748643e-01
+epsilon_min = 8.72736581e-02
+epsilon_decay = 5.71607308e-03
 learning_rate = 0.01
 learning_rate_decay = 1e-3
 
@@ -2489,12 +2494,10 @@ BeyOp.set(
 			kappa=2.576
 		 )
 
-HP_Names, best_hyperparameters, best_objective = BeyOp.pickup_training(model=True)
+#HP_Names, best_hyperparameters, best_objective = BeyOp.pickup_training(model=True)
 
 #HP_Names, best_hyperparameters, best_objective = BeyOp.train(initial_samples=3000, training_iterations=1500, \
 #															 selected_hyperparameters=selected_HP, \
 #															 RegisterTime=True, ReturnTime=False, ReturnHP=1, save_every=2, TotalSamples=1500)
 
-print(HP_Names)
-print(best_hyperparameters)
-print(best_objective)
+agent.train(Save=True)
