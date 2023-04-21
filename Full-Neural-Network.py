@@ -1,5 +1,6 @@
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
+from concurrent.futures import ThreadPoolExecutor
 from scipy.signal import convolve2d
 from scipy.optimize import minimize
 from abc import ABC, abstractmethod
@@ -219,39 +220,29 @@ class Basic_Convolution(Layer_Convolutional):
         # for input sizes
         self.InputSize = []
 
-        # If there are multiple inputs
-        if self.IsMultipleInputs == True:
-
-            # Itterate through each input
-            for matrix in self.XPadded:
-
-                # Append the hight x length
-                # of each input to the variable
-                self.InputSize.append([len(matrix[0]), len(matrix)])
-
-        # If there is one input
-        else:
-
-            # Get hight x length
-            # of the singular input
-            # and append it to the variable
-            self.InputSize = [len(self.XPadded[0]), len(self.XPadded)]
+        # Get hight x length
+        self.InputSize = [([len(matrix[0]), len(matrix)])
+                          for matrix in self.XPadded] if self.IsMultipleInputs == True else [len(self.XPadded[0]), len(self.XPadded)]
 
         self.output = []
 
         self.outputPreBatch = []
 
-        # Itterate through each input
-        for i, matrix in enumerate(self.XPadded):
+        # Define a function to perform the convolution for a single input and kernel
+        def single_convolution(matrix, kernel, j):
+            return self.ConvolutionalSlicer(kernel, matrix, 'Basic_Convolution', 'forward', j)
 
-            # And for every kernel
-            for index, kernel in enumerate(self.Filters):
+        # Use ThreadPoolExecutor to parallelize the convolution computation
+        with ThreadPoolExecutor() as executor:
+            # Itterate through each input
+            for i, matrix in enumerate(self.XPadded):
+                # And for every kernel
+                for j, kernel in enumerate(self.Filters):
+                    # Append the output of the convolution
+                    self.outputPreBatch.append(
+                        executor.submit(single_convolution, matrix, kernel, j).result())
 
-                # Append the output of the convolution
-                self.outputPreBatch.append((self.ConvolutionalSlicer(
-                    kernel, matrix, 'Basic_Convolution', 'forward', index)))
-
-            self.output.append(self.outputPreBatch)
+                self.output.append(self.outputPreBatch)
 
         self.output = np.array(self.outputPreBatch, dtype=object)
 
@@ -262,26 +253,6 @@ class Basic_Convolution(Layer_Convolutional):
         self.dbiases = []
         self.dinputs = []
 
-        # Gradients on regularization
-        # L1 on weights
-        if self.weight_regularizer_l1 > 0:
-            dL1 = np.ones_like(self.Filters)
-            dL1[self.Filters < 0] = -1
-            self.dweights += self.weight_regularizer_l1 * dL1
-        # L2 on weights
-        if self.weight_regularizer_l2 > 0:
-            self.dweights += 2 * self.weight_regularizer_l2 * \
-                self.Filters
-        # L1 on biases
-        if self.bias_regularizer_l1 > 0:
-            dL1 = np.ones_like(self.Biases)
-            dL1[self.Biases < 0] = -1
-            self.dbiases += self.bias_regularizer_l1 * dL1
-        # L2 on biases
-        if self.bias_regularizer_l2 > 0:
-            self.dbiases += 2 * self.bias_regularizer_l2 * \
-                self.Biases
-
         # Iterate through every output (input on
         # the forward pass, since self.output's
         # first dimention is the inputs)
@@ -303,21 +274,21 @@ class Basic_Convolution(Layer_Convolutional):
 
                 self.dbiases.append(sum(dvalues[j]))
 
-        # Define blank lists to append to
-        self.dweights = []
-        self.dbiases = []
-        self.dinputs = []
-
         # Gradients on regularization
         # L1 on weights
         if self.weight_regularizer_l1 > 0:
-            dL1 = np.ones_like(self.weights)
-            dL1[self.weights < 0] = -1
-            self.dweights += self.weight_regularizer_l1 * dL1
-        # L2 on weights
+            dL1 = [np.ones_like(K) for K in self.Filters]
+            dL1 = [[[-1 if value < 0 else value for value in row]
+                    for row in Filter] for Filter in self.Filters]
+            self.dweights = [np.add(dw_matrix, self.weight_regularizer_l1 * np.array(dL1_matrix))
+                             for dw_matrix, dL1_matrix in zip(self.dweights, dL1)]
+
+       # L2 on weights
         if self.weight_regularizer_l2 > 0:
-            self.dweights += 2 * self.weight_regularizer_l2 * \
-                self.weights
+            self.dweights = [self.dweights[i] + 2 * self.weight_regularizer_l2 *
+                             K for i, K in enumerate(self.Filters)]
+
+        ''''
         # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.biases)
@@ -326,33 +297,109 @@ class Basic_Convolution(Layer_Convolutional):
         # L2 on biases
         if self.bias_regularizer_l2 > 0:
             self.dbiases += 2 * self.bias_regularizer_l2 * \
-                self.biases
-
-        # Iterate through every output (input on
-        # the forward pass, since self.output's
-        # first dimention is the inputs)
-        for i in range(0, self.batch_size):
-
-            # Iterate through every filter index
-            for j in range(0, len(self.Filters)):
-
-                # Get the rotated filter (180 degrees)
-                self.rotated_filter = np.rot90(self.Filters[j], 2)
-
-                # Convolve the gradient with the rotated filter
-                self.dinputs.append(self.ConvolutionalSlicer(
-                    self.rotated_filter, np.pad(dvalues[j], 1), 'Basic_Convolution', 'backward'))
-
-                # Append the derivative of the weights at index j
-                self.dweights.append(self.ConvolutionalSlicer(
-                    dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
-
-                self.dbiases.append(sum(dvalues[j]))
+                self.biases'''
 
 # Flatten layer
 
 
 class Layer_Flatten:
+
+    # Forward
+    def forward(self, inputs, training):
+
+        self.batch_size = len(model.batch_X)  # ! Change to more general !
+
+        # Define output list
+        self.output = []
+
+        # Define the shapes of the
+        # inputs for backward pass
+        self.InputShape = []
+
+        # For every input, append the
+        # flattened version of it
+        for i, matrix in enumerate(inputs):
+
+            # Append to output
+            self.output.append(matrix.ravel())
+
+            # Get the shape of
+            # the current input
+            self.InputShape.append(matrix.shape)
+
+        self.output = np.concatenate(self.output)
+
+        self.output = np.reshape(self.output, [self.batch_size, -1])
+
+    # Backward
+    def backward(self, dvalues):
+
+        self.dvalues = np.ravel(dvalues)
+
+        # Set dinputs as a
+        # blank array to be
+        # appended to
+        self.dinputs = []
+
+        # Set the starting index
+        self.start = 0
+        self.end = 0
+
+        # For every input in
+        # the forward pass
+        for i, shape in enumerate(self.InputShape):
+
+            # Multiply the length by
+            # hight to find the amount
+            # of numbers in the input shape
+            self.size = np.prod(shape)
+
+            self.end += self.size
+            self.end = int(self.end)
+
+            # For the amount of numbers in
+            # the input shape, starting at
+            # the end of all the previous
+            # amounts of numbers in all of
+            # the shapes combined, append
+            # those number reshaped to be
+            # the size of the inputs into the output
+            self.dinputsPreReshape = self.dvalues[self.start: self.end]
+
+            self.dinputs.append(
+                self.dinputsPreReshape.reshape(shape[0], shape[1]))
+
+            # Add the amount of numbers
+            # used to self.start to find
+            # the next starting point
+            self.start = self.end
+            self.start = int(self.start)
+
+        # Initialize a dictionary to store the sums
+        sums = {}
+
+        # Define a function to sum the input matrices with the same shape
+        def sum_matrices(input_matrix):
+            shape = input_matrix.shape
+            if shape not in sums:
+                sums[shape] = input_matrix
+            else:
+                sums[shape] += input_matrix
+
+        # Use ThreadPoolExecutor to parallelize the summing of input matrices
+        with ThreadPoolExecutor() as executor:
+            # Iterate over the inputs in self.dinputs
+            executor.map(sum_matrices, self.dinputs)
+
+        # Create a new array to store the sums
+        self.summed_inputs = []
+
+        # Iterate over the keys of the sums dictionary to add the sums to the new array
+        for shape, sum_input in sums.items():
+            self.summed_inputs.append(sum_input)
+
+        # Convert the summed_inputs array to a NumPy array
+        self.dinputs = np.array(self.summed_inputs, dtype=object)
 
     # forward
     def forward(self, inputs, training):
@@ -869,33 +916,99 @@ class Loss:
         # 0 by default
         regularization_loss = 0
 
-        # Calculate regularization loss
-        # iterate all trainable layers
-        for layer in self.trainable_layers:
+        # If there aren't any trainable convolutional layers
+        # in the network, run normal L1 and L2 regularization
+        if not any(isinstance(layer, Basic_Convolution) for layer in self.trainable_layers):
+            # Calculate regularization loss
+            # iterate all trainable layers
+            for layer in self.trainable_layers:
 
-            # L1 regularization - weights
-            # calculate only when factor greater than 0
-            if layer.weight_regularizer_l1 > 0:
-                regularization_loss += layer.weight_regularizer_l1 * \
-                    np.sum(np.abs(layer.weights))
+                # L1 regularization - weights
+                # calculate only when factor greater than 0
+                if layer.weight_regularizer_l1 > 0:
+                    regularization_loss += layer.weight_regularizer_l1 * \
+                        np.sum(np.abs(layer.weights))
 
-            # L2 regularization - weights
-            if layer.weight_regularizer_l2 > 0:
-                regularization_loss += layer.weight_regularizer_l2 * \
-                    np.sum(layer.weights *
-                           layer.weights)
+                # L2 regularization - weights
+                if layer.weight_regularizer_l2 > 0:
+                    regularization_loss += layer.weight_regularizer_l2 * \
+                        np.sum(layer.weights *
+                               layer.weights)
 
-            # L1 regularization - biases
-            # calculate only when factor greater than 0
-            if layer.bias_regularizer_l1 > 0:
-                regularization_loss += layer.bias_regularizer_l1 * \
-                    np.sum(np.abs(layer.biases))
+                # L1 regularization - biases
+                # calculate only when factor greater than 0
+                if layer.bias_regularizer_l1 > 0:
+                    regularization_loss += layer.bias_regularizer_l1 * \
+                        np.sum(np.abs(layer.biases))
 
-            # L2 regularization - biases
-            if layer.bias_regularizer_l2 > 0:
-                regularization_loss += layer.bias_regularizer_l2 * \
-                    np.sum(layer.biases *
-                           layer.biases)
+                # L2 regularization - biases
+                if layer.bias_regularizer_l2 > 0:
+                    regularization_loss += layer.bias_regularizer_l2 * \
+                        np.sum(layer.biases *
+                               layer.biases)
+
+            return regularization_loss
+
+        # If there are trainable convolutional layers
+        # in the network, run L1 and L2 regularization
+        # by first checking the layer type
+        else:
+
+            # Calculate regularization loss
+            # iterate all trainable layers
+            for layer in self.trainable_layers:
+
+                if not hasattr(layer, 'Filters') and layer.weight_regularizer_l1 > 0:
+                    # L1 regularization - weights
+                    # calculate only when factor greater than 0
+                    regularization_loss += layer.weight_regularizer_l1 * \
+                        np.sum(np.abs(layer.weights))
+
+                elif layer.weight_regularizer_l1 > 0:
+                    # L1 regularization - weights
+                    regularization_loss += layer.weight_regularizer_l1 * \
+                        np.sum([np.sum(np.abs(K))
+                               for K in layer.Filters])
+
+                if not hasattr(layer, 'Filters') and layer.weight_regularizer_l2 > 0:
+                    # L2 regularization - weights
+                    regularization_loss += layer.weight_regularizer_l2 * \
+                        np.sum(layer.weights *
+                               layer.weights)
+
+                elif layer.weight_regularizer_l2 > 0:
+                    # L2 regularization - weights
+                    regularization_loss += layer.weight_regularizer_l2 * \
+                        np.sum([np.sum(K.ravel() *
+                               K.ravel()) for K in layer.Filters])
+
+                # TODO - add L1 and L2 regularization for biases on convolutional layers when implemented
+
+                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l1 > 0:
+                    # L1 regularization - biases
+                    # calculate only when factor greater than 0
+                    # regularization_loss += layer.bias_regularizer_l1 * \
+                    #    np.sum(np.abs(layer.biases))
+                    pass
+
+                elif layer.bias_regularizer_l1 > 0:
+                    # L1 regularization - biases
+                    # calculate only when factor greater than 0
+                    regularization_loss += layer.bias_regularizer_l1 * \
+                        np.sum(np.abs(layer.biases))
+
+                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l2 > 0:
+                    # L2 regularization - biases
+                    # regularization_loss += layer.bias_regularizer_l2 * \
+                    #    np.sum(layer.biases *
+                    #        layer.biases)
+                    pass
+
+                elif layer.bias_regularizer_l2 > 0:
+                    # L2 regularization - biases
+                    regularization_loss += layer.bias_regularizer_l2 * \
+                        np.sum(layer.biases *
+                               layer.biases)
 
         return regularization_loss
 
@@ -1303,7 +1416,7 @@ class Model:
         for epoch in range(1, epochs+1):
 
             # Print epoch number
-            # print(f'epoch: {epoch}')
+            print(f'epoch: {epoch}')
 
             # Reset accumulated values in loss and accuracy objects
             self.loss.new_pass()
@@ -1348,13 +1461,13 @@ class Model:
                 self.optimizer.post_update_params()
 
                 # Print a summary
-                # if not step % print_every or step == train_steps - 1:
-                #    print(f'step: {step}, ' +
-                #          f'acc: {accuracy:.3f}, ' +
-                #          f'loss: {loss:.3f} (' +
-                #          f'data_loss: {data_loss:.3f}, ' +
-                #          f'reg_loss: {regularization_loss:.3f}), ' +
-                #          f'lr: {self.optimizer.current_learning_rate}')
+                if not step % print_every or step == train_steps - 1:
+                    print(f'step: {step}, ' +
+                          f'acc: {accuracy:.3f}, ' +
+                          f'loss: {loss:.3f} (' +
+                          f'data_loss: {data_loss:.3f}, ' +
+                          f'reg_loss: {regularization_loss:.3f}), ' +
+                          f'lr: {self.optimizer.current_learning_rate}')
 
             # Get and print epoch loss and accuracy
             epoch_data_loss, epoch_regularization_loss = \
@@ -1363,12 +1476,12 @@ class Model:
             epoch_loss = epoch_data_loss + epoch_regularization_loss
             epoch_accuracy = self.accuracy.calculate_accumulated()
 
-            # print(f'training, ' +
-            #      f'acc: {epoch_accuracy:.3f}, ' +
-            #      f'loss: {epoch_loss:.3f} (' +
-            #      f'data_loss: {epoch_data_loss:.3f}, ' +
-            #      f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-            #      f'lr: {self.optimizer.current_learning_rate}')
+            print(f'training, ' +
+                  f'acc: {epoch_accuracy:.3f}, ' +
+                  f'loss: {epoch_loss:.3f} (' +
+                  f'data_loss: {epoch_data_loss:.3f}, ' +
+                  f'reg_loss: {epoch_regularization_loss:.3f}), ' +
+                  f'lr: {self.optimizer.current_learning_rate}')
 
             # If there is the validation data
             if validation_data is not None:
@@ -2113,7 +2226,7 @@ class DQNAgent:
 # Loads a MNIST dataset
 
 
-def Load_MNIST_Dataset(dataset, path):
+def load_mnist_dataset(dataset, path):
 
     # Scan all the directories and create a list of labels
     labels = os.listdir(os.path.join(path, dataset))
@@ -2141,7 +2254,7 @@ def Load_MNIST_Dataset(dataset, path):
 # MNIST dataset (train + test)
 
 
-def Create_Data_MNIST(path):
+def create_data_mnist(path):
 
     # Load both sets separately
     X, y = load_mnist_dataset('train', path)
@@ -2317,3 +2430,49 @@ def Create_Kwargs(variable_list):
 def flip_bounds(HP_Range):
     flipped_HP_Range = [(upper, lower) for lower, upper in HP_Range]
     return flipped_HP_Range
+
+
+# Create dataset
+X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
+
+X = (X.astype(np.float32) - 127.5) / 127.5
+X_test = (X_test.astype(np.float32) - 127.5) / 127.5
+
+# Shuffle the training dataset
+keys = np.array(range(X.shape[0]))
+np.random.shuffle(keys)
+X = X[keys]
+y = y[keys]
+
+# Instantiate the model
+model = Model()
+
+Shapes = [[6, 6], [10, 10], [14, 14]]
+
+FiltersToBePassed, BiasesToBePassed = Create_Filters(Shapes, 0, 1, True)
+
+# Add layers
+model.add(Basic_Convolution(FiltersToBePassed,
+          0, BiasesToBePassed, True, True,  weight_regularizer_l1=0.0005))
+model.add(Layer_Flatten())
+model.add(Activation_ReLU())
+model.add(Layer_Dense(1115, 128))
+model.add(Activation_ReLU())
+model.add(Layer_Dense(128, 128))
+model.add(Activation_ReLU())
+model.add(Layer_Dense(128, 10))
+model.add(Activation_Softmax())
+
+# Set loss, optimizer and accuracy objects
+model.set(
+    loss=Loss_CategoricalCrossentropy(),
+    optimizer=Optimizer_Adam(learning_rate=0.01, decay=1e-3),
+    accuracy=Accuracy_Categorical()
+)
+
+# Finalize the model
+model.finalize()
+
+# Train the model
+model.train(X, y, validation_data=(X_test, y_test),
+            epochs=10, batch_size=32, print_every=100)
