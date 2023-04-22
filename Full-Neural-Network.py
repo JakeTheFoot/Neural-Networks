@@ -175,8 +175,9 @@ class Layer_Convolutional:
 
             if np.ndim(self.Biases) > 0:
 
-                # Add the bias
-                self.ConvolutionResult += self.Biases[0][index]
+                # Add bias
+                self.ConvolutionResult = np.array(
+                    self.ConvolutionResult) + self.Biases[index]
 
         # Return the reshaped output of
         # the convolution slice after
@@ -271,8 +272,7 @@ class Basic_Convolution(Layer_Convolutional):
                 # Append the derivative of the weights at index j
                 self.dweights.append(self.ConvolutionalSlicer(
                     dvalues[j], self.XPadded[i], 'Basic_Convolution', 'backward'))
-
-                self.dbiases.append(sum(dvalues[j]))
+                self.dbiases.append(np.sum(np.sum(dvalues[j])))
 
         # Gradients on regularization
         # L1 on weights
@@ -867,8 +867,8 @@ class Optimizer_Adam:
                         layer.weight_momentums[i][j][k] = self.beta_1 * layer.weight_momentums[i][j][k] + \
                             (1 - self.beta_1) * layer.dweights[i][j][k]
                 if np.ndim(layer.Biases) > 0:
-                    layer.bias_momentums[0][i] = self.beta_1 * layer.bias_momentums[0][i] + \
-                        (1 - self.beta_1) * layer.dbiases[0][i]
+                    layer.bias_momentums[i] = self.beta_1 * layer.bias_momentums[i] + \
+                        (1 - self.beta_1) * layer.dbiases[i]
 
             # Get corrected momentum
             # self.iteration is 0 at first pass and we need to start with 1 here
@@ -876,29 +876,29 @@ class Optimizer_Adam:
                                            for momentumK in layer.weight_momentums]
             if np.ndim(layer.Biases) > 0:
                 bias_momentums_correctedK = [momentumKB / (1 - self.beta_1 ** (self.iterations + 1))
-                                             for momentumKB in layer.bias_momentums[0]]
+                                             for momentumKB in layer.bias_momentums]
 
             # Update cache with squared current gradients
             for i in range(len(layer.Filters)):
                 layer.weight_cache[i] = self.beta_2 * layer.weight_cache[i] + \
                     (1 - self.beta_2) * layer.dweights[i]**2
                 if np.ndim(layer.Biases) > 0:
-                    layer.bias_cache[0][i] = self.beta_2 * layer.bias_cache[0][i] + \
-                        (1 - self.beta_2) * layer.dbiases[0][i]**2
+                    layer.bias_cache[i] = self.beta_2 * layer.bias_cache[i] + \
+                        (1 - self.beta_2) * layer.dbiases[i]**2
 
             # Get corrected cache
             weight_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1))
                                        for cache in layer.weight_cache]
             if np.ndim(layer.Biases) > 0:
                 bias_cache_correctedK = [cache / (1 - self.beta_2 ** (self.iterations + 1))
-                                         for cache in layer.bias_cache[0]]
+                                         for cache in layer.bias_cache]
 
             # Vanilla SGD parameter update + normalization with square rooted cache
             for i in range(len(layer.Filters)):
                 layer.Filters[i] -= self.current_learning_rate * weight_momentums_correctedK[i] / \
                     (np.sqrt(weight_cache_correctedK[i]) + self.epsilon)
                 if np.ndim(layer.Biases) > 0:
-                    layer.Biases[0][i] -= self.current_learning_rate * bias_momentums_correctedK[i] / \
+                    layer.Biases[i] -= self.current_learning_rate * bias_momentums_correctedK[i] / \
                         (np.sqrt(bias_cache_correctedK[i]) + self.epsilon)
 
     # Update convolutional layer parameters
@@ -982,33 +982,29 @@ class Loss:
                         np.sum([np.sum(K.ravel() *
                                K.ravel()) for K in layer.Filters])
 
-                # TODO - add L1 and L2 regularization for biases on convolutional layers when implemented
-
                 if not hasattr(layer, 'Filters') and layer.bias_regularizer_l1 > 0:
-                    # L1 regularization - biases
-                    # calculate only when factor greater than 0
-                    # regularization_loss += layer.bias_regularizer_l1 * \
-                    #    np.sum(np.abs(layer.biases))
-                    pass
-
-                elif layer.bias_regularizer_l1 > 0:
                     # L1 regularization - biases
                     # calculate only when factor greater than 0
                     regularization_loss += layer.bias_regularizer_l1 * \
                         np.sum(np.abs(layer.biases))
 
-                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l2 > 0:
-                    # L2 regularization - biases
-                    # regularization_loss += layer.bias_regularizer_l2 * \
-                    #    np.sum(layer.biases *
-                    #        layer.biases)
-                    pass
+                elif layer.bias_regularizer_l1 > 0:
+                    # L1 regularization - biases
+                    # calculate only when factor greater than 0
+                    regularization_loss += layer.bias_regularizer_l1 * \
+                        np.sum(np.abs(layer.Biases))
 
-                elif layer.bias_regularizer_l2 > 0:
+                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l2 > 0:
                     # L2 regularization - biases
                     regularization_loss += layer.bias_regularizer_l2 * \
                         np.sum(layer.biases *
                                layer.biases)
+
+                elif layer.bias_regularizer_l2 > 0:
+                    # L2 regularization - biases
+                    regularization_loss += layer.bias_regularizer_l2 * \
+                        np.sum(layer.Biases *
+                               layer.Biases)
 
         return regularization_loss
 
@@ -2272,7 +2268,7 @@ def Create_Filters(Shapes, Low=0, High=1, Biases=False, BiasLow=-1, BiasHigh=1):
 
     if Biases == True:
 
-        RandomBiases = np.random.uniform(BiasLow, BiasHigh, [1, len(Shapes)])
+        RandomBiases = np.random.uniform(BiasLow, BiasHigh, [len(Shapes)])
 
     for shape in Shapes:
 
@@ -2450,10 +2446,10 @@ model = Model()
 Shapes = [[6, 6], [10, 10], [14, 14]]
 
 FiltersToBePassed, BiasesToBePassed = Create_Filters(Shapes, 0, 1, True)
-
+print(BiasesToBePassed.shape)
 # Add layers
 model.add(Basic_Convolution(FiltersToBePassed,
-          0, BiasesToBePassed, True, True,  weight_regularizer_l1=0.0005))
+          0, BiasesToBePassed, True, True, bias_regularizer_l2=0.0005))
 model.add(Layer_Flatten())
 model.add(Activation_ReLU())
 model.add(Layer_Dense(1115, 128))
