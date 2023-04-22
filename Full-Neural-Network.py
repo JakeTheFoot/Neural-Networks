@@ -2440,6 +2440,7 @@ if True:
     state_size = 0
     action_size = 0
     agent = 0
+    episodes = 0
 
 # Create dataset
 X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
