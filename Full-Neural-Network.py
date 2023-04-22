@@ -670,7 +670,7 @@ class Optimizer_SGD:
         # Update weights and biases using either
         # vanilla or momentum updates
         layer.Filters += weight_updates
-        layer.Biases += bias_updatesf
+        layer.Biases += bias_updates
 
     # Call once after any parameter updates
     def post_update_params(self):
@@ -1865,9 +1865,13 @@ class BayesianOptimizer(ABC):
 
         self.names = HP_Names
 
+        start = time.time()
+
         if remaining_init_data_iters is not None and remaining_init_data_iters > 0:
             self.X, self.y = self.generate_initial_data(remaining_init_data_iters, HP_Ranges, self.names, save_every=save_every, X=False,
                                                         y=False, TotalSamples=initial_samples, training_iterations=training_iterations)
+
+        mid = time.time()
 
         if remaining_max_iters is not None and remaining_max_iters > 0:
             best_hyperparameters, best_objective = self.maximize(
@@ -1875,6 +1879,8 @@ class BayesianOptimizer(ABC):
         else:
             max_index = np.argmax(self.y)
             best_hyperparameters, best_objective = self.X[max_index], self.y[max_index]
+
+        end = time.time()
 
         if ReturnHP == 3:
             if ReturnTime:
@@ -2427,6 +2433,13 @@ def flip_bounds(HP_Range):
     flipped_HP_Range = [(upper, lower) for lower, upper in HP_Range]
     return flipped_HP_Range
 
+
+# Initialize Unused variables
+if True:
+    env = 0
+    state_size = 0
+    action_size = 0
+    agent = 0
 
 # Create dataset
 X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
