@@ -2223,7 +2223,8 @@ class DQNAgent:
             return PlotDictionary['avg'][-1]
 
     def predict(state):
-        return self.act(state)
+        # ! placeholder for self.act(state) since vs code doesn't like it
+        return agent.act(state)
 
 # Loads a MNIST dataset
 
