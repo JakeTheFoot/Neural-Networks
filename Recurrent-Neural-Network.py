@@ -1,3 +1,11 @@
+
+'''
+TODO:
+- Add a way to save the recurrent and convolutional layers
+- Add a way to load the recurrent and convolutional layers
+- Add support for recurrent and convolutional layers in optimizers other than Adam
+'''
+
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from concurrent.futures import ThreadPoolExecutor
