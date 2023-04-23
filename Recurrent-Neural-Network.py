@@ -29,7 +29,7 @@ class Layer_Dense:
     def __init__(self, n_inputs, n_neurons,
                  weight_regularizer_l1=0, weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0):
-        print(n_inputs, n_neurons)
+
         # Initialize weights and biases
         self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
         self.biases = np.zeros((1, n_neurons))
@@ -117,8 +117,6 @@ class Layer_Dropout:
         self.dinputs = dvalues * self.binary_mask
 
 # Convolutional layer class
-# NOTE: Using parrent class for easy
-# NOTE: implimentation of MaxPooling and AveragePooling
 
 
 class Layer_Convolutional:
@@ -127,6 +125,7 @@ class Layer_Convolutional:
     def __init__(self, Filters, Padding=0, Biases=0, IsMultipleFilters=True,
                  IsMultipleInputs=True, weight_regularizer_l1=0, weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0):
+
         # Set layer variables
         self.Padding = Padding
         self.Biases = Biases
@@ -496,43 +495,64 @@ class Layer_Flatten:
         # convert the summed_inputs array to a NumPy array
         self.dinputs = np.array(self.summed_inputs, dtype=object)
 
-# Recuurrent layer
+# Recurrent layer
 
 
-class Recurrent_Layer:
+class Layer_Recurrent:
 
     # Layer initialization
-    def __init__(self, n_inputs, n_neurons, n_hidden,
+    def __init__(self, n_inputs, n_neurons,
                  weight_regularizer_l1=0, weight_regularizer_l2=0,
-                 bias_regularizer_l1=0, bias_regularizer_l2=0, recurrent_regularizer_l1=0, recurrent_regularizer_l2=0):
+                 bias_regularizer_l1=0, bias_regularizer_l2=0, initializationMethod="Zeros"):
 
-        # Initialize hidden
-        self.n_hidden = n_hidden
+        # Initialize hidden vector
+        if initializationMethod == "Zeros":
+            self.hiddenVector = [[0, 0]]
+        else:
+            self.hiddenVector = [0.01 * np.random.randn(n_neurons, )]
         # Initialize weights and biases
-        self.weights = 0.01 * \
-            np.random.randn((n_inputs + self.n_hidden), n_neurons)
+        self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
+        self.HiddenVectorWeights = 0.01 * np.random.randn(n_neurons, n_neurons)
         self.biases = np.zeros((1, n_neurons))
         # Set regularization strength
         self.weight_regularizer_l1 = weight_regularizer_l1
         self.weight_regularizer_l2 = weight_regularizer_l2
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
-        self.recurrent_regularizer_l1 = recurrent_regularizer_l1
-        self.recurrent_regularizer_l2 = recurrent_regularizer_l2
 
     # Forward pass
     def forward(self, inputs, training):
-        # Remember input values
+
+        # Manipulate hidden vector
+        self.hiddenVectorInput = np.dot(
+            self.hiddenVector[-1], self.HiddenVectorWeights)
+        # Remember input values and manipulate them to be the correct shape
         self.inputs = inputs
-        self.inputs.append(model.Hidden)
-        # Calculate output values from inputs, weights and biases
-        self.output = np.dot(inputs, self.weights) + self.biases
+        self.inputs = np.dot(self.inputs, self.weights)
+        # Add the hidden vector input and biases to the inputs
+        self.inputs += self.hiddenVectorInput + self.biases
+        # Calculate output values from inputs, hidden vector, weights, and biases using the ReLU activation function
+        self.output = np.maximum(0, self.inputs)
+        # Append the output to the hidden vector for use in the next forward pass
+        self.hiddenVector.append(self.output)
 
     # Backward pass
     def backward(self, dvalues):
-        # Gradients on parameters
-        self.dweights = np.dot(self.inputs.T, dvalues)
-        self.dbiases = np.sum(dvalues, axis=0, keepdims=True)
+        # Initialize gradients on parameters
+        self.dweights = np.zeros_like(self.weights)
+        self.dbiases = np.zeros_like(self.biases)
+        self.dHiddenVectorWeights = np.zeros_like(self.HiddenVectorWeights)
+
+        # Calculate gradients for each hidden state
+        dhidden = np.dot(dvalues, self.HiddenVectorWeights.T)
+        for t in reversed(range(len(self.hiddenVector) - 1)):
+            # Apply ReLU derivative to the previous output
+            dhidden *= (self.hiddenVector[t + 1] > 0)
+            self.dHiddenVectorWeights += np.dot(
+                self.hiddenVector[t].T, dhidden)
+            self.dweights += np.dot(self.inputs.T, dhidden)
+            self.dbiases += np.sum(dhidden, axis=0, keepdims=True)
+            dhidden = np.dot(dhidden, self.HiddenVectorWeights.T)
 
         # Gradients on regularization
         # L1 on weights
@@ -542,8 +562,7 @@ class Recurrent_Layer:
             self.dweights += self.weight_regularizer_l1 * dL1
         # L2 on weights
         if self.weight_regularizer_l2 > 0:
-            self.dweights += 2 * self.weight_regularizer_l2 * \
-                self.weights
+            self.dweights += 2 * self.weight_regularizer_l2 * self.weights
         # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.biases)
@@ -551,11 +570,20 @@ class Recurrent_Layer:
             self.dbiases += self.bias_regularizer_l1 * dL1
         # L2 on biases
         if self.bias_regularizer_l2 > 0:
-            self.dbiases += 2 * self.bias_regularizer_l2 * \
-                self.biases
+            self.dbiases += 2 * self.bias_regularizer_l2 * self.biases
 
         # Gradient on values
         self.dinputs = np.dot(dvalues, self.weights.T)
+
+    # Retrieve layer parameters
+    def get_parameters(self):
+        return self.weights, self.biases
+
+    # Set weights and biases in a layer instance
+    def set_parameters(self, weights, biases):
+        self.weights = weights
+        self.biases = biases
+
 
 # Input "layer"
 
@@ -1368,7 +1396,6 @@ class Model:
         self.layers = []
         # Softmax classifier's output object
         self.softmax_classifier_output = None
-        self.PreviousOutput = 0
 
     # Add objects to the model
     def add(self, layer):
@@ -1452,9 +1479,7 @@ class Model:
 
     # Train the model
     def train(self, X, y, *, epochs=1, batch_size=None,
-              print_every=1, validation_data=None, TimeSteps=0, DataPointsToPredict=0):
-
-        self.TimeSteps = TimeSteps
+              print_every=1, validation_data=None):
 
         self.batch_size = batch_size
 
@@ -1473,181 +1498,85 @@ class Model:
             if train_steps * batch_size < len(X):
                 train_steps += 1
 
-        if self.TimeSteps != 0:
-            # Main training loop
-            for epoch in range(1, epochs+1):
+        # Main training loop
+        for epoch in range(1, epochs+1):
 
-                # Print epoch number
-                print(f'epoch: {epoch}')
+            # Print epoch number
+            print(f'epoch: {epoch}')
 
-                # Reset accumulated values in loss and accuracy objects
-                self.loss.new_pass()
-                self.accuracy.new_pass()
+            # Reset accumulated values in loss and accuracy objects
+            self.loss.new_pass()
+            self.accuracy.new_pass()
 
-                # Iterate over steps
-                for step in range(train_steps):
+            # Iterate over steps
+            for step in range(train_steps):
 
-                    # If batch size is not set -
-                    # train using one step and full dataset
-                    if batch_size is None:
-                        self.batch_X = X
-                        batch_y = y
+                # If batch size is not set -
+                # train using one step and full dataset
+                if batch_size is None:
+                    self.batch_X = X
+                    batch_y = y
 
-                    # Otherwise slice a batch
-                    else:
-                        self.batch_X = X[step*batch_size:(step+1)*batch_size]
-                        batch_y = y[step*batch_size:(step+1)*batch_size]
+                # Otherwise slice a batch
+                else:
+                    self.batch_X = X[step*batch_size:(step+1)*batch_size]
+                    batch_y = y[step*batch_size:(step+1)*batch_size]
 
-                    # Perform the forward pass
-                    output = self.forward(self.batch_X, training=True)
+                # Perform the forward pass
+                output = self.forward(self.batch_X, training=True)
 
-                    # Calculate loss
-                    data_loss, regularization_loss = \
-                        self.loss.calculate(output, batch_y,
-                                            include_regularization=True)
-                    loss = data_loss + regularization_loss
+                # Calculate loss
+                data_loss, regularization_loss = \
+                    self.loss.calculate(output, batch_y,
+                                        include_regularization=True)
+                loss = data_loss + regularization_loss
 
-                    # Get predictions and calculate an accuracy
-                    predictions = self.output_layer_activation.predictions(
-                        output)
-                    accuracy = self.accuracy.calculate(predictions,
-                                                       batch_y)
+                # Get predictions and calculate an accuracy
+                predictions = self.output_layer_activation.predictions(
+                    output)
+                accuracy = self.accuracy.calculate(predictions,
+                                                   batch_y)
 
-                    # Perform backward pass
-                    self.backward(output, batch_y)
+                # Perform backward pass
+                self.backward(output, batch_y)
 
-                    # Optimize (update parameters)
-                    self.optimizer.pre_update_params()
-                    for layer in self.trainable_layers:
-                        self.optimizer.update_params(layer)
-                    self.optimizer.post_update_params()
+                # Optimize (update parameters)
+                self.optimizer.pre_update_params()
+                for layer in self.trainable_layers:
+                    self.optimizer.update_params(layer)
+                self.optimizer.post_update_params()
 
-                    # Print a summary
-                    if not step % print_every or step == train_steps - 1:
-                        print(f'step: {step}, ' +
-                              f'acc: {accuracy:.3f}, ' +
-                              f'loss: {loss:.3f} (' +
-                              f'data_loss: {data_loss:.3f}, ' +
-                              f'reg_loss: {regularization_loss:.3f}), ' +
-                              f'lr: {self.optimizer.current_learning_rate}')
+                # Print a summary
+                if not step % print_every or step == train_steps - 1:
+                    print(f'step: {step}, ' +
+                          f'acc: {accuracy:.3f}, ' +
+                          f'loss: {loss:.3f} (' +
+                          f'data_loss: {data_loss:.3f}, ' +
+                          f'reg_loss: {regularization_loss:.3f}), ' +
+                          f'lr: {self.optimizer.current_learning_rate}')
 
-                # Get and print epoch loss and accuracy
-                epoch_data_loss, epoch_regularization_loss = \
-                    self.loss.calculate_accumulated(
-                        include_regularization=True)
-                epoch_loss = epoch_data_loss + epoch_regularization_loss
-                epoch_accuracy = self.accuracy.calculate_accumulated()
+            # Get and print epoch loss and accuracy
+            epoch_data_loss, epoch_regularization_loss = \
+                self.loss.calculate_accumulated(
+                    include_regularization=True)
+            epoch_loss = epoch_data_loss + epoch_regularization_loss
+            epoch_accuracy = self.accuracy.calculate_accumulated()
 
-                print(f'training, ' +
-                      f'acc: {epoch_accuracy:.3f}, ' +
-                      f'loss: {epoch_loss:.3f} (' +
-                      f'data_loss: {epoch_data_loss:.3f}, ' +
-                      f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-                      f'lr: {self.optimizer.current_learning_rate}')
+            print(f'training, ' +
+                  f'acc: {epoch_accuracy:.3f}, ' +
+                  f'loss: {epoch_loss:.3f} (' +
+                  f'data_loss: {epoch_data_loss:.3f}, ' +
+                  f'reg_loss: {epoch_regularization_loss:.3f}), ' +
+                  f'lr: {self.optimizer.current_learning_rate}')
 
-                # If there is the validation data
-                if validation_data is not None:
-
-                    # Evaluate the model:
-                    self.evaluate(*validation_data,
-                                  batch_size=batch_size)
-
-                # Evaluate the model:
-                self.evaluate(*validation_data,
-                              batch_size=batch_size)
-
-        else:   # Includes Recurrent
-
-            # Main training loop
-            for epoch in range(1, epochs+1):
-
-                # Print epoch number
-                print(f'epoch: {epoch}')
-
-                # Reset accumulated values in loss and accuracy objects
-                self.loss.new_pass()
-                self.accuracy.new_pass()
-
-                # Iterate over steps
-                for step in range(train_steps):
-
-                    # If batch size is not set -
-                    # train using one step and full dataset
-                    if batch_size is None:
-                        self.batch_X = X
-                        batch_y = y
-
-                    # Otherwise slice a batch
-                    else:
-                        self.batch_X = X[step*batch_size:(step+1)*batch_size]
-                        batch_y = y[step*batch_size:(step+1)*batch_size]
-
-                    for i in range(self.TimeSteps + DataPointsToPredict):
-                        # Perform the forward pass
-                        self.PreviousOutput = self.forward(
-                            self.batch_X, training=True)
-                        self.PreviousOutputs.append(self.PreviousOutput)
-
-                    output = self.PreviousOutputs[-DataPointsToPredict]
-                    output.reshape(len(output), 1)
-
-                    # Calculate loss
-                    data_loss, regularization_loss = \
-                        self.loss.calculate(output, batch_y,
-                                            include_regularization=True)
-                    loss = data_loss + regularization_loss
-
-                    # Get predictions and calculate an accuracy
-                    predictions = self.output_layer_activation.predictions(
-                        output)
-                    accuracy = self.accuracy.calculate(predictions,
-                                                       batch_y)
-
-                    # Perform backward pass
-                    self.backward(output, batch_y)
-
-                    # Optimize (update parameters)
-                    self.optimizer.pre_update_params()
-                    for layer in self.trainable_layers:
-                        self.optimizer.update_params(layer)
-                    self.optimizer.post_update_params()
-
-                    # Print a summary
-                    if not step % print_every or step == train_steps - 1:
-                        print(f'step: {step}, ' +
-                              f'acc: {accuracy:.3f}, ' +
-                              f'loss: {loss:.3f} (' +
-                              f'data_loss: {data_loss:.3f}, ' +
-                              f'reg_loss: {regularization_loss:.3f}), ' +
-                              f'lr: {self.optimizer.current_learning_rate}')
-
-                # Get and print epoch loss and accuracy
-                epoch_data_loss, epoch_regularization_loss = \
-                    self.loss.calculate_accumulated(
-                        include_regularization=True)
-                epoch_loss = epoch_data_loss + epoch_regularization_loss
-                epoch_accuracy = self.accuracy.calculate_accumulated()
-
-                print(f'training, ' +
-                      f'acc: {epoch_accuracy:.3f}, ' +
-                      f'loss: {epoch_loss:.3f} (' +
-                      f'data_loss: {epoch_data_loss:.3f}, ' +
-                      f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-                      f'lr: {self.optimizer.current_learning_rate}')
-
-                # If there is the validation data
-                if validation_data is not None:
-
-                    # Evaluate the model:
-                    self.evaluate(*validation_data,
-                                  batch_size=batch_size)
+            # If there is the validation data
+            if validation_data is not None:
 
                 # Evaluate the model:
                 self.evaluate(*validation_data,
                               batch_size=batch_size)
 
     # Evaluates the model using passed-in dataset
-
     def evaluate(self, X_val, y_val, *, batch_size=None):
 
         # Default value if batch size is not being set
@@ -1756,6 +1685,7 @@ class Model:
         # Call forward method of every object in a chain
         # Pass output of the previous object as a parameter
         for layer in self.layers:
+
             layer.forward(layer.prev.output, training)
 
         # "layer" is now the last object from the list,
@@ -1792,34 +1722,10 @@ class Model:
         # layer will try to access shortly
         self.loss.backward(output, y)
 
-        if self.TimeSteps != 0:
-            # Call backward method going through all the objects
-            # in reversed order passing dinputs as a parameter
-            for layer in reversed(self.layers):
-                layer.backward(layer.next.dinputs)
-        else:
-            self.layersR = self.layers[:-1]
-            self.layersR = self.layersR[:(len(self.layersR) - (
-                next(i for i, item in enumerate(self.layersR) if isinstance(item, Recurrent_Layer))))]
-            RecurrentLayerGradientSum = 0
-            # Call backward method going through all the objects
-            # in reversed order passing dinputs as a parameter
-            for _ in range(self.TimeSteps - 1):
-
-                self.layersR[-1].next.dinputs = RecurrentLayerGradientSum
-                RecurrentLayerGradientSum = 0
-
-                for layer in reversed(self.layersR):
-                    layer.backward(layer.next.dinputs)
-
-                for layer in self.layersR:
-                    if layer.__class__.__name__ == 'Recurrent_Layer':
-                        RecurrentLayerGradientSum += layer.dinputs
-
-            self.layersR[-1].next.dinputs = RecurrentLayerGradientSum
-
-            for layer in self.layers[:-1]:
-                layer.backward(layer.next.dinputs)
+        # Call backward method going through all the objects
+        # in reversed order passing dinputs as a parameter
+        for layer in reversed(self.layers):
+            layer.backward(layer.next.dinputs)
 
     # Retrieves and returns parameters of trainable layers
     def get_parameters(self):
