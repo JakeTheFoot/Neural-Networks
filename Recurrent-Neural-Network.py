@@ -4,6 +4,7 @@ TODO:
 - Add a way to save the recurrent and convolutional layers
 - Add a way to load the recurrent and convolutional layers
 - Add support for recurrent and convolutional layers in optimizers other than Adam
+- Add README in github
 '''
 
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -893,59 +894,8 @@ class Optimizer_Adam:
     # Update fully connected layer parameters
     def update_params(self, layer):
 
-        # If it's not a
-        # convolutional layer
-        if not hasattr(layer, 'Filters'):
-
-            # If layer does not contain cache arrays,
-            # create them filled with zeros
-            if not hasattr(layer, 'weight_cache'):
-                layer.weight_momentums = np.zeros_like(layer.weights)
-                layer.weight_cache = np.zeros_like(layer.weights)
-                layer.bias_momentums = np.zeros_like(layer.biases)
-                layer.bias_cache = np.zeros_like(layer.biases)
-
-            # Update momentum with current gradients
-            layer.weight_momentums = self.beta_1 * \
-                layer.weight_momentums + \
-                (1 - self.beta_1) * layer.dweights
-            layer.bias_momentums = self.beta_1 * \
-                layer.bias_momentums + \
-                (1 - self.beta_1) * layer.dbiases
-
-            # Get corrected momentum
-            # self.iteration is 0 at first pass
-            # and we need to start with 1 here
-            weight_momentums_corrected = layer.weight_momentums / \
-                (1 - self.beta_1 ** (self.iterations + 1))
-            bias_momentums_corrected = layer.bias_momentums / \
-                (1 - self.beta_1 ** (self.iterations + 1))
-
-            # Update cache with squared current gradients
-            layer.weight_cache = self.beta_2 * layer.weight_cache + \
-                (1 - self.beta_2) * layer.dweights**2
-            layer.bias_cache = self.beta_2 * layer.bias_cache + \
-                (1 - self.beta_2) * layer.dbiases**2
-
-            # Get corrected cache
-            weight_cache_corrected = layer.weight_cache / \
-                (1 - self.beta_2 ** (self.iterations + 1))
-            bias_cache_corrected = layer.bias_cache / \
-                (1 - self.beta_2 ** (self.iterations + 1))
-
-            # Vanilla SGD parameter update + normalization
-            # with square rooted cache
-            layer.weights -= self.current_learning_rate * \
-                weight_momentums_corrected / \
-                (np.sqrt(weight_cache_corrected) +
-                 self.epsilon)
-            layer.biases -= self.current_learning_rate * \
-                bias_momentums_corrected / \
-                (np.sqrt(bias_cache_corrected) +
-                 self.epsilon)
-
-        # If it is a convolutional layer
-        else:
+        # If it's a convolutional layer
+        if hasattr(layer, 'Filters'):
 
             # If layer does not contain cache arrays, create them filled with zeros
             if not hasattr(layer, 'weight_cache'):
@@ -999,7 +949,126 @@ class Optimizer_Adam:
                     layer.Biases[i] -= self.current_learning_rate * bias_momentums_correctedK[i] / \
                         (np.sqrt(bias_cache_correctedK[i]) + self.epsilon)
 
+        # If it's a recurrent layer
+        elif hasattr(layer, 'HiddenVectorWeights'):
+            # If layer does not contain cache arrays,
+            # create them filled with zeros
+            if not hasattr(layer, 'weight_cache'):
+                layer.weight_momentums = np.zeros_like(layer.weights)
+                layer.weight_cache = np.zeros_like(layer.weights)
+                layer.hidden_vector_weight_momentums = np.zeros_like(
+                    layer.HiddenVectorWeights)
+                layer.hidden_vector_weight_cache = np.zeros_like(
+                    layer.HiddenVectorWeights)
+                layer.bias_momentums = np.zeros_like(layer.biases)
+                layer.bias_cache = np.zeros_like(layer.biases)
+
+            # Update momentum with current gradients
+            layer.weight_momentums = self.beta_1 * \
+                layer.weight_momentums + \
+                (1 - self.beta_1) * layer.dweights
+            layer.hidden_vector_weight_momentums = self.beta_1 * \
+                layer.hidden_vector_weight_momentums + \
+                (1 - self.beta_1) * layer.dHiddenVectorWeights
+            layer.bias_momentums = self.beta_1 * \
+                layer.bias_momentums + \
+                (1 - self.beta_1) * layer.dbiases
+
+            # Get corrected momentum
+            # self.iteration is 0 at first pass
+            # and we need to start with 1 here
+            weight_momentums_corrected = layer.weight_momentums / \
+                (1 - self.beta_1 ** (self.iterations + 1))
+            hidden_vector_weight_momentums_corrected = layer.hidden_vector_weight_momentums / \
+                (1 - self.beta_1 ** (self.iterations + 1))
+            bias_momentums_corrected = layer.bias_momentums / \
+                (1 - self.beta_1 ** (self.iterations + 1))
+
+            # Update cache with squared current gradients
+            layer.weight_cache = self.beta_2 * layer.weight_cache + \
+                (1 - self.beta_2) * layer.dweights**2
+            layer.hidden_vector_weight_cache = self.beta_2 * layer.hidden_vector_weight_cache + \
+                (1 - self.beta_2) * layer.dHiddenVectorWeights**2
+            layer.bias_cache = self.beta_2 * layer.bias_cache + \
+                (1 - self.beta_2) * layer.dbiases**2
+
+            # Get corrected cache
+            weight_cache_corrected = layer.weight_cache / \
+                (1 - self.beta_2 ** (self.iterations + 1))
+            hidden_vector_weight_cache_corrected = layer.hidden_vector_weight_cache / \
+                (1 - self.beta_2 ** (self.iterations + 1))
+            bias_cache_corrected = layer.bias_cache / \
+                (1 - self.beta_2 ** (self.iterations + 1))
+
+            # Vanilla SGD parameter update + normalization
+            # with square rooted cache
+            layer.weights -= self.current_learning_rate * \
+                weight_momentums_corrected / \
+                (np.sqrt(weight_cache_corrected) +
+                 self.epsilon)
+            layer.HiddenVectorWeights -= self.current_learning_rate * \
+                hidden_vector_weight_momentums_corrected / \
+                (np.sqrt(hidden_vector_weight_cache_corrected) +
+                 self.epsilon)
+            layer.biases -= self.current_learning_rate * \
+                bias_momentums_corrected / \
+                (np.sqrt(bias_cache_corrected) +
+                 self.epsilon)
+
+        # If it's not a
+        # convolutional layer
+        # or recurrent layer
+        else:
+
+            # If layer does not contain cache arrays,
+            # create them filled with zeros
+            if not hasattr(layer, 'weight_cache'):
+                layer.weight_momentums = np.zeros_like(layer.weights)
+                layer.weight_cache = np.zeros_like(layer.weights)
+                layer.bias_momentums = np.zeros_like(layer.biases)
+                layer.bias_cache = np.zeros_like(layer.biases)
+
+            # Update momentum with current gradients
+            layer.weight_momentums = self.beta_1 * \
+                layer.weight_momentums + \
+                (1 - self.beta_1) * layer.dweights
+            layer.bias_momentums = self.beta_1 * \
+                layer.bias_momentums + \
+                (1 - self.beta_1) * layer.dbiases
+
+            # Get corrected momentum
+            # self.iteration is 0 at first pass
+            # and we need to start with 1 here
+            weight_momentums_corrected = layer.weight_momentums / \
+                (1 - self.beta_1 ** (self.iterations + 1))
+            bias_momentums_corrected = layer.bias_momentums / \
+                (1 - self.beta_1 ** (self.iterations + 1))
+
+            # Update cache with squared current gradients
+            layer.weight_cache = self.beta_2 * layer.weight_cache + \
+                (1 - self.beta_2) * layer.dweights**2
+            layer.bias_cache = self.beta_2 * layer.bias_cache + \
+                (1 - self.beta_2) * layer.dbiases**2
+
+            # Get corrected cache
+            weight_cache_corrected = layer.weight_cache / \
+                (1 - self.beta_2 ** (self.iterations + 1))
+            bias_cache_corrected = layer.bias_cache / \
+                (1 - self.beta_2 ** (self.iterations + 1))
+
+            # Vanilla SGD parameter update + normalization
+            # with square rooted cache
+            layer.weights -= self.current_learning_rate * \
+                weight_momentums_corrected / \
+                (np.sqrt(weight_cache_corrected) +
+                 self.epsilon)
+            layer.biases -= self.current_learning_rate * \
+                bias_momentums_corrected / \
+                (np.sqrt(bias_cache_corrected) +
+                 self.epsilon)
+
     # Update convolutional layer parameters
+
     def post_update_params(self):
         self.iterations += 1
 
@@ -1487,9 +1556,11 @@ class Model:
 
     # Train the model
     def train(self, X, y, *, epochs=1, batch_size=None,
-              print_every=1, validation_data=None):
+              print_every=1, validation_data=None, timesteps=None, repeats=1):
 
         self.batch_size = batch_size
+        self.timesteps = timesteps if timesteps else 1
+        self.repeats = repeats
 
         # Initialize accuracy object
         self.accuracy.init(y)
@@ -1500,61 +1571,91 @@ class Model:
         # Calculate number of steps
         if batch_size is not None:
             train_steps = len(X) // batch_size
-            # Dividing rounds down. If there are some remaining
-            # data but not a full batch, this won't include it
-            # Add `1` to include this not full batch
             if train_steps * batch_size < len(X):
                 train_steps += 1
+
+        recurrent_layer = any(isinstance(layer, Layer_Recurrent)
+                              for layer in self.layers)
 
         # Main training loop
         for epoch in range(1, epochs+1):
 
-            # Print epoch number
             print(f'epoch: {epoch}')
-
-            # Reset accumulated values in loss and accuracy objects
             self.loss.new_pass()
             self.accuracy.new_pass()
 
-            # Iterate over steps
             for step in range(train_steps):
 
-                # If batch size is not set -
-                # train using one step and full dataset
                 if batch_size is None:
                     self.batch_X = X
                     batch_y = y
-
-                # Otherwise slice a batch
                 else:
                     self.batch_X = X[step*batch_size:(step+1)*batch_size]
                     batch_y = y[step*batch_size:(step+1)*batch_size]
 
-                # Perform the forward pass
-                output = self.forward(self.batch_X, training=True)
+                if recurrent_layer:
+                    outputs = []
+                    for _ in range(self.timesteps):
+                        output = self.forward(self.batch_X, training=True)
+                        outputs.append(output)
 
-                # Calculate loss
-                data_loss, regularization_loss = \
-                    self.loss.calculate(output, batch_y,
-                                        include_regularization=True)
-                loss = data_loss + regularization_loss
+                    for _ in range(self.repeats - 1):
+                        for _ in range(self.timesteps):
+                            output = self.forward(output, training=True)
+                            outputs.append(output)
 
-                # Get predictions and calculate an accuracy
-                predictions = self.output_layer_activation.predictions(
-                    output)
-                accuracy = self.accuracy.calculate(predictions,
-                                                   batch_y)
+                    loss = 0
+                    data_loss = 0
+                    regularization_loss = 0
 
-                # Perform backward pass
-                self.backward(output, batch_y)
+                    for output in outputs:
+                        data_loss_tmp, regularization_loss_tmp = \
+                            self.loss.calculate(output, batch_y,
+                                                include_regularization=True)
+                        data_loss += data_loss_tmp
+                        regularization_loss += regularization_loss_tmp
 
-                # Optimize (update parameters)
-                self.optimizer.pre_update_params()
-                for layer in self.trainable_layers:
-                    self.optimizer.update_params(layer)
-                self.optimizer.post_update_params()
+                    data_loss /= self.timesteps * self.repeats
+                    regularization_loss /= self.timesteps * self.repeats
+                    loss = data_loss + regularization_loss
 
-                # Print a summary
+                    if isinstance(self.layers[-1], Activation_Softmax):
+                        predictions = [self.output_layer_activation.predictions(
+                            out) for out in outputs]
+                    else:
+                        predictions = outputs
+
+                    accuracy = self.accuracy.calculate(predictions, batch_y)
+
+                    # Perform backward pass
+                    for output in outputs:
+                        self.backward(output, batch_y)
+
+                    # Optimize (update parameters)
+                    self.optimizer.pre_update_params()
+                    for layer in self.trainable_layers:
+                        self.optimizer.update_params(layer)
+                    self.optimizer.post_update_params()
+                else:
+                    output = self.forward(self.batch_X, training=True)
+
+                    data_loss, regularization_loss = \
+                        self.loss.calculate(output, batch_y,
+                                            include_regularization=True)
+                    loss = data_loss + regularization_loss
+
+                    predictions = self.output_layer_activation.predictions(
+                        output)
+                    accuracy = self.accuracy.calculate(predictions,
+                                                       batch_y)
+
+                    self.backward(output, batch_y)
+
+                    self.optimizer.pre_update_params()
+                    for layer in self.trainable_layers:
+                        self.optimizer.update_params(layer)
+                    self.optimizer.post_update_params()
+
                 if not step % print_every or step == train_steps - 1:
                     print(f'step: {step}, ' +
                           f'acc: {accuracy:.3f}, ' +
@@ -1563,19 +1664,73 @@ class Model:
                           f'reg_loss: {regularization_loss:.3f}), ' +
                           f'lr: {self.optimizer.current_learning_rate}')
 
-            # Get and print epoch loss and accuracy
-            epoch_data_loss, epoch_regularization_loss = \
-                self.loss.calculate_accumulated(
-                    include_regularization=True)
-            epoch_loss = epoch_data_loss + epoch_regularization_loss
-            epoch_accuracy = self.accuracy.calculate_accumulated()
+                # Print epoch number
+                print(f'epoch: {epoch}')
 
-            print(f'training, ' +
-                  f'acc: {epoch_accuracy:.3f}, ' +
-                  f'loss: {epoch_loss:.3f} (' +
-                  f'data_loss: {epoch_data_loss:.3f}, ' +
-                  f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-                  f'lr: {self.optimizer.current_learning_rate}')
+                # Reset accumulated values in loss and accuracy objects
+                self.loss.new_pass()
+                self.accuracy.new_pass()
+
+                # Iterate over steps
+                for step in range(train_steps):
+
+                    # If batch size is not set -
+                    # train using one step and full dataset
+                    if batch_size is None:
+                        self.batch_X = X
+                        batch_y = y
+
+                    # Otherwise slice a batch
+                    else:
+                        self.batch_X = X[step*batch_size:(step+1)*batch_size]
+                        batch_y = y[step*batch_size:(step+1)*batch_size]
+
+                    # Perform the forward pass
+                    output = self.forward(self.batch_X, training=True)
+
+                    # Calculate loss
+                    data_loss, regularization_loss = \
+                        self.loss.calculate(output, batch_y,
+                                            include_regularization=True)
+                    loss = data_loss + regularization_loss
+
+                    # Get predictions and calculate an accuracy
+                    predictions = self.output_layer_activation.predictions(
+                        output)
+                    accuracy = self.accuracy.calculate(predictions,
+                                                       batch_y)
+
+                    # Perform backward pass
+                    self.backward(output, batch_y)
+
+                    # Optimize (update parameters)
+                    self.optimizer.pre_update_params()
+                    for layer in self.trainable_layers:
+                        self.optimizer.update_params(layer)
+                    self.optimizer.post_update_params()
+
+                    # Print a summary
+                    if not step % print_every or step == train_steps - 1:
+                        print(f'step: {step}, ' +
+                              f'acc: {accuracy:.3f}, ' +
+                              f'loss: {loss:.3f} (' +
+                              f'data_loss: {data_loss:.3f}, ' +
+                              f'reg_loss: {regularization_loss:.3f}), ' +
+                              f'lr: {self.optimizer.current_learning_rate}')
+
+                # Get and print epoch loss and accuracy
+                epoch_data_loss, epoch_regularization_loss = \
+                    self.loss.calculate_accumulated(
+                        include_regularization=True)
+                epoch_loss = epoch_data_loss + epoch_regularization_loss
+                epoch_accuracy = self.accuracy.calculate_accumulated()
+
+                print(f'training, ' +
+                      f'acc: {epoch_accuracy:.3f}, ' +
+                      f'loss: {epoch_loss:.3f} (' +
+                      f'data_loss: {epoch_data_loss:.3f}, ' +
+                      f'reg_loss: {epoch_regularization_loss:.3f}), ' +
+                      f'lr: {self.optimizer.current_learning_rate}')
 
             # If there is the validation data
             if validation_data is not None:
@@ -1587,51 +1742,61 @@ class Model:
     # Evaluates the model using passed-in dataset
     def evaluate(self, X_val, y_val, *, batch_size=None):
 
+        recurrent_layer = any(isinstance(layer, Layer_Recurrent)
+                              for layer in self.layers)
+
         # Default value if batch size is not being set
         validation_steps = 1
 
         # Calculate number of steps
         if batch_size is not None:
             validation_steps = len(X_val) // batch_size
-            # Dividing rounds down. If there are some remaining
-            # data but not a full batch, this won't include it
-            # Add `1` to include this not full batch
             if validation_steps * batch_size < len(X_val):
                 validation_steps += 1
 
-        # Reset accumulated values in loss
-        # and accuracy objects
+        # Reset accumulated values in loss and accuracy objects
         self.loss.new_pass()
         self.accuracy.new_pass()
 
         # Iterate over steps
         for step in range(validation_steps):
 
-            # If batch size is not set -
-            # train using one step and full dataset
             if batch_size is None:
                 self.batch_X = X_val
-                self.batch_y = y_val
-
-            # Otherwise slice a batch
+                batch_y = y_val
             else:
-                self.batch_X = X_val[
-                    step*batch_size:(step+1)*batch_size
-                ]
-                batch_y = y_val[
-                    step*batch_size:(step+1)*batch_size
-                ]
+                self.batch_X = X_val[step*batch_size:(step+1)*batch_size]
+                batch_y = y_val[step*batch_size:(step+1)*batch_size]
 
-            # Perform the forward pass
-            output = self.forward(self.batch_X, training=False)
+            if recurrent_layer:
+                outputs = []
+                for _ in range(self.timesteps):
+                    output = self.forward(self.batch_X, training=False)
+                    outputs.append(output)
 
-            # Calculate the loss
-            self.loss.calculate(output, batch_y)
+                for _ in range(self.repeats - 1):
+                    for _ in range(self.timesteps):
+                        output = self.forward(output, training=False)
+                        outputs.append(output)
 
-            # Get predictions and calculate an accuracy
-            predictions = self.output_layer_activation.predictions(
-                output)
-            self.accuracy.calculate(predictions, batch_y)
+                loss = 0
+                for output in outputs:
+                    loss += self.loss.calculate(output, batch_y)
+
+                loss /= self.timesteps * self.repeats
+
+                if isinstance(self.layers[-1], Activation_Softmax):
+                    predictions = [self.output_layer_activation.predictions(
+                        out) for out in outputs]
+                else:
+                    predictions = outputs
+
+                accuracy = self.accuracy.calculate(predictions, batch_y)
+            else:
+                output = self.forward(self.batch_X, training=False)
+                loss = self.loss.calculate(output, batch_y)
+                predictions = self.output_layer_activation.predictions(output)
+                accuracy = self.accuracy.calculate(predictions, batch_y)
 
         # Get and print validation loss and accuracy
         validation_loss = self.loss.calculate_accumulated()
@@ -1645,16 +1810,15 @@ class Model:
     # Predicts on the samples
     def predict(self, X, *, batch_size=None):
 
+        recurrent_layer = any(isinstance(layer, Layer_Recurrent)
+                              for layer in self.layers)
+
         # Default value if batch size is not being set
         prediction_steps = 1
 
         # Calculate number of steps
         if batch_size is not None:
             prediction_steps = len(X) // batch_size
-
-            # Dividing rounds down. If there are some remaining
-            # data but not a full batch, this won't include it
-            # Add `1` to include this not full batch
             if prediction_steps * batch_size < len(X):
                 prediction_steps += 1
 
@@ -1664,20 +1828,27 @@ class Model:
         # Iterate over steps
         for step in range(prediction_steps):
 
-            # If batch size is not set -
-            # train using one step and full dataset
             if batch_size is None:
                 self.batch_X = X
-
-            # Otherwise slice a batch
             else:
                 self.batch_X = X[step*batch_size:(step+1)*batch_size]
 
-            # Perform the forward pass
-            batch_output = self.forward(self.batch_X, training=False)
+            if recurrent_layer:
+                outputs = []
+                for _ in range(self.timesteps):
+                    batch_output = self.forward(self.batch_X, training=False)
+                    outputs.append(batch_output)
 
-            # Append batch prediction to the list of predictions
-            output.append(batch_output)
+                for _ in range(self.repeats - 1):
+                    for _ in range(self.timesteps):
+                        batch_output = self.forward(
+                            batch_output, training=False)
+                        outputs.append(batch_output)
+
+                output.append(outputs[-1])
+            else:
+                batch_output = self.forward(self.batch_X, training=False)
+                output.append(batch_output)
 
         # Stack and return results
         return np.vstack(output)
@@ -1686,14 +1857,10 @@ class Model:
     def forward(self, X, training):
 
         # Call forward method on the input layer
-        # this will set the output property that
-        # the first layer in "prev" object is expecting
         self.input_layer.forward(X, training)
 
         # Call forward method of every object in a chain
-        # Pass output of the previous object as a parameter
         for layer in self.layers:
-
             layer.forward(layer.prev.output, training)
 
         # "layer" is now the last object from the list,
@@ -1705,17 +1872,8 @@ class Model:
 
         # If softmax classifier
         if self.softmax_classifier_output is not None:
-            # First call backward method
-            # on the combined activation/loss
-            # this will set dinputs property
             self.softmax_classifier_output.backward(output, y)
-
-            # Since we'll not call backward method of the last layer
-            # which is Softmax activation
-            # as we used combined activation/loss
-            # object, let's set dinputs in this object
-            self.layers[-1].dinputs = \
-                self.softmax_classifier_output.dinputs
+            self.layers[-1].dinputs = self.softmax_classifier_output.dinputs
 
             # Call backward method going through
             # all the objects but last
@@ -1726,8 +1884,6 @@ class Model:
             return
 
         # First call backward method on the loss
-        # this will set dinputs property that the last
-        # layer will try to access shortly
         self.loss.backward(output, y)
 
         # Call backward method going through all the objects
