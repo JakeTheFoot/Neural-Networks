@@ -10,12 +10,15 @@ TODO:
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from scipy.signal import convolve2d
 from scipy.optimize import minimize
 from abc import ABC, abstractmethod
 import matplotlib.pyplot as plt
 from collections import deque
 from scipy.stats import norm
+import yfinance as yf
+import pandas as pd
 import numpy as np
 import statistics
 import pickle
