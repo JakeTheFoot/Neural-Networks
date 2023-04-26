@@ -8,6 +8,7 @@ TODO:
 '''
 
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.model_selection import train_test_split
 from sklearn.gaussian_process.kernels import Matern
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import statistics
+import zipfile
 import pickle
 import random
 import joblib
@@ -31,6 +33,7 @@ import time
 import cv2
 import gym
 import os
+import io
 
 # Dense layer
 
@@ -519,7 +522,7 @@ class Layer_Recurrent:
 
         # Initialize hidden vector
         if initializationMethod == "Zeros":
-            self.hiddenVector = [[0, 0]]
+            self.hiddenVector = np.zeros(n_neurons)
         else:
             self.hiddenVector = [0.01 * np.random.randn(n_neurons, )]
         # Initialize weights and biases
@@ -531,10 +534,11 @@ class Layer_Recurrent:
         self.weight_regularizer_l2 = weight_regularizer_l2
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
+        # ! Add hidden vector regularization terms
 
     # Forward pass
     def forward(self, inputs, training):
-
+        print(self.hiddenVector[-1])
         # Manipulate hidden vector
         self.hiddenVectorInput = np.dot(
             self.hiddenVector[-1], self.HiddenVectorWeights)
@@ -1343,6 +1347,10 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
     # Forward pass
     def forward(self, y_pred, y_true):
 
+        if model.timesteps > 1:
+            # Calculate loss
+            y_pred = np.squeeze(y_pred)
+
         # Calculate loss
         sample_losses = np.mean((y_true - y_pred)**2, axis=-1)
 
@@ -1357,6 +1365,9 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
         # Number of outputs in every sample
         # We'll use the first sample to count them
         outputs = len(y_pred[0])
+
+        if model.timesteps > 1:
+            y_pred = np.squeeze(y_pred)
 
         # Gradient on values
         self.dinputs = -2 * (y_true - y_pred) / outputs
@@ -1463,6 +1474,11 @@ class Accuracy_Regression(Accuracy):
 
     # Compares predictions to the ground truth values
     def compare(self, predictions, y):
+
+        if model.timesteps > 1:
+            # Calculate loss
+            predictions = np.squeeze(predictions)
+
         return np.absolute(predictions - y) < self.precision
 
 # Model class
@@ -1598,13 +1614,17 @@ class Model:
 
                 if recurrent_layer:
                     outputs = []
-                    for _ in range(self.timesteps):
-                        output = self.forward(self.batch_X, training=True)
+                    for t in range(self.timesteps):
+                        # Extract the corresponding time step's rows from each matrix in the batch
+                        time_step_batch_X = self.batch_X[:, t, :]
+                        output = self.forward(time_step_batch_X, training=True)
                         outputs.append(output)
 
                     for _ in range(self.repeats - 1):
-                        for _ in range(self.timesteps):
-                            output = self.forward(output, training=True)
+                        for t in range(self.timesteps):
+                            time_step_batch_X = output  # Use the output from the previous time step
+                            output = self.forward(
+                                time_step_batch_X, training=True)
                             outputs.append(output)
 
                     loss = 0
@@ -1639,6 +1659,7 @@ class Model:
                     for layer in self.trainable_layers:
                         self.optimizer.update_params(layer)
                     self.optimizer.post_update_params()
+
                 else:
                     output = self.forward(self.batch_X, training=True)
 
@@ -2691,6 +2712,82 @@ def flip_bounds(HP_Range):
     flipped_HP_Range = [(upper, lower) for lower, upper in HP_Range]
     return flipped_HP_Range
 
+# Create stock dataset
+
+
+def create_stock_data(Num_of_Days, Percent_for_Tests, etf_folder_path_input="stock_dataset/ETFs/"):
+    data_matrices = []
+
+    etf_folder_path = etf_folder_path_input
+
+    if os.path.exists(etf_folder_path):
+        # Iterate through each file in the folder
+        for file in os.listdir(etf_folder_path):
+            file_path = os.path.join(etf_folder_path, file)
+
+            # Read the CSV file using pandas
+            df = pd.read_csv(file_path)
+
+            # Extract the last Num_of_Days days of data and save it as a 2D matrix
+            last_n_days = df[-Num_of_Days:].copy()
+            data_matrix = last_n_days[["Open", "High", "Low", "Close"]].values
+
+            # Pad the data_matrix with zeros if the number of rows is less than Num_of_Days
+            if data_matrix.shape[0] < Num_of_Days:
+                data_matrix = np.pad(data_matrix, ((
+                    Num_of_Days - data_matrix.shape[0], 0), (0, 0)), mode='constant', constant_values=0)
+
+            # Append data_matrix to data_matrices
+            data_matrices.append(data_matrix)
+    else:
+        # Access the folder labeled "ETF" from the file "stock_dataset.zip"
+        with zipfile.ZipFile("stock_dataset.zip", "r") as zip_ref:
+            etf_folder = [info for info in zip_ref.infolist(
+            ) if info.filename.startswith("ETF/")]
+
+            # Iterate through each file in the folder
+            for file in etf_folder:
+                with zip_ref.open(file, "r") as csvfile:
+                    # Read the CSV file using pandas
+                    df = pd.read_csv(io.TextIOWrapper(csvfile))
+
+                    # Extract the last Num_of_Days days of data and save it as a 2D matrix
+                    last_n_days = df[-Num_of_Days:].copy()
+                    data_matrix = last_n_days[[
+                        "Open", "High", "Low", "Close"]].values
+
+                    # Pad the data_matrix with zeros if the number of rows is less than Num_of_Days
+                    if data_matrix.shape[0] < Num_of_Days:
+                        data_matrix = np.pad(data_matrix, ((
+                            Num_of_Days - data_matrix.shape[0], 0), (0, 0)), mode='constant', constant_values=0)
+
+                    # Append data_matrix to data_matrices
+                    data_matrices.append(data_matrix)
+
+    # Convert the list of 2D matrices into a 3D array
+    data_3d_array = np.array(data_matrices)
+
+    # Shuffle the 3D array along its first axis
+    np.random.shuffle(data_3d_array)
+
+    # Normalize the values in the 3D array to a range of -1 to 1
+    half_max = np.max(data_3d_array) / 2
+    normalized_3d_array = (data_3d_array - half_max) / half_max
+
+    # Split the matrices into training and testing data
+    X_all, X_test_all = train_test_split(
+        normalized_3d_array, test_size=Percent_for_Tests, random_state=42)
+
+    # Break off the "Close" column from each matrix and append them to separate variables "y" and "y_test"
+    y = X_all[:, :, -1]
+    y_test = X_test_all[:, :, -1]
+
+    # Remove the "Close" column from each matrix in X_all and X_test_all
+    X = np.delete(X_all, -1, axis=2)
+    X_test = np.delete(X_test_all, -1, axis=2)
+
+    return X, X_test, y, y_test
+
 
 # Initialize Unused variables
 if True:
@@ -2701,41 +2798,25 @@ if True:
     episodes = 0
 
 # Create dataset
-X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
-
-X = (X.astype(np.float32) - 127.5) / 127.5
-X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-
-# Shuffle the training dataset
-keys = np.array(range(X.shape[0]))
-np.random.shuffle(keys)
-X = X[keys]
-y = y[keys]
+X, X_test, y, y_test = create_stock_data(
+    Num_of_Days=10, Percent_for_Tests=0.1)
 
 # Instantiate the model
 model = Model()
 
-Shapes = [[6, 6], [10, 10], [14, 14]]
-
-FiltersToBePassed, BiasesToBePassed = Create_Filters(Shapes, 0, 1, True)
-print(BiasesToBePassed.shape)
 # Add layers
-model.add(Basic_Convolution(FiltersToBePassed,
-          0, BiasesToBePassed, True, True, bias_regularizer_l2=0.0005))
-model.add(Layer_Flatten())
+model.add(Layer_Dense(3, 96))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(1115, 128))
+model.add(Layer_Recurrent(96, 96))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 128))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(128, 10))
-model.add(Activation_Softmax())
+model.add(Layer_Dense(96, 1))
+model.add(Activation_Linear())
 
 # Set loss, optimizer and accuracy objects
 model.set(
-    loss=Loss_CategoricalCrossentropy(),
+    loss=Loss_MeanSquaredError(),
     optimizer=Optimizer_Adam(learning_rate=0.01, decay=1e-3),
-    accuracy=Accuracy_Categorical()
+    accuracy=Accuracy_Regression()
 )
 
 # Finalize the model
@@ -2743,4 +2824,4 @@ model.finalize()
 
 # Train the model
 model.train(X, y, validation_data=(X_test, y_test),
-            epochs=10, batch_size=32, print_every=100)
+            epochs=10, batch_size=32, print_every=100, timesteps=10)
