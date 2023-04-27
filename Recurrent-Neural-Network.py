@@ -520,15 +520,16 @@ class Layer_Recurrent:
                  weight_regularizer_l1=0, weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0, initializationMethod="Zeros"):
 
-        # Initialize hidden vector
         if initializationMethod == "Zeros":
-            self.hiddenVector = np.zeros(n_neurons)
+            self.hiddenVector = np.zeros(
+                (model.initial_batch_size, n_neurons))
         else:
             self.hiddenVector = [0.01 * np.random.randn(n_neurons, )]
         # Initialize weights and biases
         self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
         self.HiddenVectorWeights = 0.01 * np.random.randn(n_neurons, n_neurons)
         self.biases = np.zeros((1, n_neurons))
+        self.inputscount = n_inputs
         # Set regularization strength
         self.weight_regularizer_l1 = weight_regularizer_l1
         self.weight_regularizer_l2 = weight_regularizer_l2
@@ -538,21 +539,22 @@ class Layer_Recurrent:
 
     # Forward pass
     def forward(self, inputs, training):
-        print(self.hiddenVector[-1])
         # Manipulate hidden vector
         self.hiddenVectorInput = np.dot(
-            self.hiddenVector[-1], self.HiddenVectorWeights)
+            self.hiddenVector[-(len(model.batch_X)):], self.HiddenVectorWeights)
         # Remember input values and manipulate them to be the correct shape
         self.inputs = inputs
         self.inputs = np.dot(self.inputs, self.weights)
         # Add the hidden vector input and biases to the inputs
         self.inputs += self.hiddenVectorInput + self.biases
         # Calculate output values from inputs, hidden vector, weights, and biases using the ReLU activation function
-        self.output = np.maximum(0, self.inputs)
+        self.output = np.tanh(self.inputs)
         # Append the output to the hidden vector for use in the next forward pass
-        self.hiddenVector.append(self.output)
+        self.hiddenVector = np.concatenate(
+            (self.hiddenVector, self.output), axis=0)
 
     # Backward pass
+
     def backward(self, dvalues):
         # Initialize gradients on parameters
         self.dweights = np.zeros_like(self.weights)
@@ -561,11 +563,11 @@ class Layer_Recurrent:
 
         # Calculate gradients for each hidden state
         dhidden = np.dot(dvalues, self.HiddenVectorWeights.T)
-        for t in reversed(range(len(self.hiddenVector) - 1)):
+        for t in reversed(range(self.inputscount, -1)):
             # Apply ReLU derivative to the previous output
             dhidden *= (self.hiddenVector[t + 1] > 0)
             self.dHiddenVectorWeights += np.dot(
-                self.hiddenVector[t].T, dhidden)
+                self.hiddenVector[t].reshape((len(), 1)), dhidden)
             self.dweights += np.dot(self.inputs.T, dhidden)
             self.dbiases += np.sum(dhidden, axis=0, keepdims=True)
             dhidden = np.dot(dhidden, self.HiddenVectorWeights.T)
@@ -755,14 +757,12 @@ class Optimizer_SGD:
             # Build weight updates with momentum - take previous
             # updates multiplied by retain factor and update with
             # current gradients
-            weight_updates = \
-                self.momentum * layer.weight_momentums - \
+            weight_updates = self.momentum * layer.weight_momentums - \
                 self.current_learning_rate * layer.dweights
             layer.weight_momentums = weight_updates
 
             # Build bias updates1
-            bias_updates = \
-                self.momentum * layer.bias_momentums - \
+            bias_updates = self.momentum * layer.bias_momentums - \
                 self.current_learning_rate * layer.dbiases
             layer.bias_momentums = bias_updates
 
@@ -1346,11 +1346,7 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
 
     # Forward pass
     def forward(self, y_pred, y_true):
-
-        if model.timesteps > 1:
-            # Calculate loss
-            y_pred = np.squeeze(y_pred)
-
+        # print('\n\nypred:\n\n', y_pred.shape, '\n\nytrue:\n\n', y_true.shape)
         # Calculate loss
         sample_losses = np.mean((y_true - y_pred)**2, axis=-1)
 
@@ -1365,14 +1361,16 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
         # Number of outputs in every sample
         # We'll use the first sample to count them
         outputs = len(y_pred[0])
-
-        if model.timesteps > 1:
-            y_pred = np.squeeze(y_pred)
-
         # Gradient on values
-        self.dinputs = -2 * (y_true - y_pred) / outputs
+        print('shape of y_true - y_pred:', (y_true - y_pred).shape)
+        print(y_true.shape, y_pred.shape)
+
+        self.dinputs = -2 * \
+            (y_true.reshape((samples, outputs)) - y_pred) / outputs
+        print(self.dinputs.shape)
         # Normalize gradient
         self.dinputs = self.dinputs / samples
+        print('dinputs_shape:', self.dinputs.shape)
 
 # Mean Absolute Error loss
 
@@ -1487,7 +1485,8 @@ class Accuracy_Regression(Accuracy):
 class Model:
 
     # Innitialization
-    def __init__(self):
+    def __init__(self, initial_batch_size=32,):
+        self.initial_batch_size = initial_batch_size
         # Create a list of network objects
         self.layers = []
         # Softmax classifier's output object
@@ -1570,8 +1569,7 @@ class Model:
            isinstance(self.loss, Loss_CategoricalCrossentropy):
             # Create an object of combined activation
             # and loss functions
-            self.softmax_classifier_output = \
-                Activation_Softmax_Loss_CategoricalCrossentropy()
+            self.softmax_classifier_output = Activation_Softmax_Loss_CategoricalCrossentropy()
 
     # Train the model
     def train(self, X, y, *, epochs=1, batch_size=None,
@@ -1583,7 +1581,6 @@ class Model:
 
         # Initialize accuracy object
         self.accuracy.init(y)
-
         # Default value if batch size is not being set
         train_steps = 1
 
@@ -1632,9 +1629,8 @@ class Model:
                     regularization_loss = 0
 
                     for output in outputs:
-                        data_loss_tmp, regularization_loss_tmp = \
-                            self.loss.calculate(output, batch_y,
-                                                include_regularization=True)
+                        data_loss_tmp, regularization_loss_tmp = self.loss.calculate(output, batch_y,
+                                                                                     include_regularization=True)
                         data_loss += data_loss_tmp
                         regularization_loss += regularization_loss_tmp
 
@@ -1663,9 +1659,8 @@ class Model:
                 else:
                     output = self.forward(self.batch_X, training=True)
 
-                    data_loss, regularization_loss = \
-                        self.loss.calculate(output, batch_y,
-                                            include_regularization=True)
+                    data_loss, regularization_loss = self.loss.calculate(output, batch_y,
+                                                                         include_regularization=True)
                     loss = data_loss + regularization_loss
 
                     predictions = self.output_layer_activation.predictions(
@@ -1713,9 +1708,8 @@ class Model:
                     output = self.forward(self.batch_X, training=True)
 
                     # Calculate loss
-                    data_loss, regularization_loss = \
-                        self.loss.calculate(output, batch_y,
-                                            include_regularization=True)
+                    data_loss, regularization_loss = self.loss.calculate(output, batch_y,
+                                                                         include_regularization=True)
                     loss = data_loss + regularization_loss
 
                     # Get predictions and calculate an accuracy
@@ -1743,9 +1737,8 @@ class Model:
                               f'lr: {self.optimizer.current_learning_rate}')
 
                 # Get and print epoch loss and accuracy
-                epoch_data_loss, epoch_regularization_loss = \
-                    self.loss.calculate_accumulated(
-                        include_regularization=True)
+                epoch_data_loss, epoch_regularization_loss = self.loss.calculate_accumulated(
+                    include_regularization=True)
                 epoch_loss = epoch_data_loss + epoch_regularization_loss
                 epoch_accuracy = self.accuracy.calculate_accumulated()
 
@@ -1909,10 +1902,11 @@ class Model:
 
         # First call backward method on the loss
         self.loss.backward(output, y)
-
         # Call backward method going through all the objects
         # in reversed order passing dinputs as a parameter
         for layer in reversed(self.layers):
+            print(layer.next.dinputs.shape)
+
             layer.backward(layer.next.dinputs)
 
     # Retrieves and returns parameters of trainable layers
@@ -1980,7 +1974,7 @@ class Model:
 
     # Loads and returns a model
 
-    @staticmethod
+    @ staticmethod
     def load(path):
 
         # Open file in the binary-read mode, load a model
@@ -2081,7 +2075,7 @@ class BayesianOptimizer(ABC):
         max_index = np.argmax(y)
         return X[max_index], y[max_index]
 
-    @abstractmethod
+    @ abstractmethod
     def _acquisition_function(self, X, y, bounds):
         pass
 
@@ -2800,6 +2794,9 @@ if True:
 # Create dataset
 X, X_test, y, y_test = create_stock_data(
     Num_of_Days=10, Percent_for_Tests=0.1)
+
+y = y[:, -1]
+y_test = y_test[:, -1]
 
 # Instantiate the model
 model = Model()

@@ -1110,7 +1110,6 @@ class Activation_Softmax_Loss_CategoricalCrossentropy:
 
     # Backward pass
     def backward(self, y_pred, y_true):
-
         # Number of samples
         samples = len(y_pred)
 
@@ -1125,6 +1124,7 @@ class Activation_Softmax_Loss_CategoricalCrossentropy:
         self.dinputs[range(samples), y_true] -= 1
         # Normalize gradient
         self.dinputs = self.dinputs / samples
+        print(self.dinputs.shape)
 
 # Binary cross-entropy loss
 
@@ -1190,6 +1190,7 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
 
         # Gradient on values
         self.dinputs = -2 * (y_true - y_pred) / outputs
+        print(self.dinputs.shape)
         # Normalize gradient
         self.dinputs = self.dinputs / samples
 
@@ -2446,28 +2447,23 @@ if True:
 # Create dataset
 X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
 
-X = (X.astype(np.float32) - 127.5) / 127.5
-X_test = (X_test.astype(np.float32) - 127.5) / 127.5
-
 # Shuffle the training dataset
 keys = np.array(range(X.shape[0]))
 np.random.shuffle(keys)
 X = X[keys]
 y = y[keys]
 
+# Scale and reshape samples
+X = (X.reshape(X.shape[0], -1).astype(np.float32) - 127.5) / 127.5
+X_test = (X_test.reshape(X_test.shape[0], -1).astype(np.float32) -
+          127.5) / 127.5
+
 # Instantiate the model
 model = Model()
 
-Shapes = [[6, 6], [10, 10], [14, 14]]
 
-FiltersToBePassed, BiasesToBePassed = Create_Filters(Shapes, 0, 1, True)
-print(BiasesToBePassed.shape)
 # Add layers
-model.add(Basic_Convolution(FiltersToBePassed,
-          0, BiasesToBePassed, True, True, bias_regularizer_l2=0.0005))
-model.add(Layer_Flatten())
-model.add(Activation_ReLU())
-model.add(Layer_Dense(1115, 128))
+model.add(Layer_Dense(X.shape[1], 128))
 model.add(Activation_ReLU())
 model.add(Layer_Dense(128, 128))
 model.add(Activation_ReLU())
@@ -2477,7 +2473,7 @@ model.add(Activation_Softmax())
 # Set loss, optimizer and accuracy objects
 model.set(
     loss=Loss_CategoricalCrossentropy(),
-    optimizer=Optimizer_Adam(learning_rate=0.01, decay=1e-3),
+    optimizer=Optimizer_Adam(decay=1e-3),
     accuracy=Accuracy_Categorical()
 )
 
@@ -2486,4 +2482,4 @@ model.finalize()
 
 # Train the model
 model.train(X, y, validation_data=(X_test, y_test),
-            epochs=10, batch_size=32, print_every=100)
+            epochs=10, batch_size=64, print_every=100)
