@@ -526,7 +526,7 @@ class Layer_Recurrent:
         self.bias_regularizer_l2 = bias_regularizer_l2
         self.inputList = []
 
-        self.timestep = model.timesteps  # ! TODO make sure this is the correct name
+        self.timesteps = model.timesteps  # ! TODO make sure this is the correct name
 
     # Forward pass
     def forward(self, inputs, training):
@@ -543,19 +543,29 @@ class Layer_Recurrent:
 
         self.hiddenVector = self.output
         self.hiddenVectorList.append(self.hiddenVector)
-        self.dinputs = 1
+        self.dinputsT = 1
 
     # Backward pass
     def backward(self, dvalues):  # !
 
+        self.dinputs = np.zeros_like(self.inputs)
+        self.dhiddenVectorWeights = np.zeros_like(self.HiddenVectorWeights)
+        self.dweights = np.zeros_like(self.weights)
+        self.dbiases = np.zeros_like(self.biases)
+
         for i in reversed(range(self.timesteps)):
-            self.dTanT = 1 - (self.hiddenVectorList[self.timestep] ** 2)
+            self.dTan = 1 - (self.hiddenVectorList[i] ** 2)
             self.dinputsT = dvalues * self.dTan
             self.dhiddenVectorWeightsT = np.dot(
-                self.hiddenVectorList[self.timestep - 1].T, self.dinputs)
+                self.hiddenVectorList[i - 1].T, self.dinputsT)
             self.dweightsT = np.dot(
-                self.inputList[self.timestep].T, self.dinputs)
-            self.dbiasesT = np.sum(self.dinputs, axis=0, keepdims=True)
+                self.inputList[i].T, self.dinputsT)
+            self.dbiasesT = np.sum(self.dinputsT, axis=0, keepdims=True)
+
+            self.dinputs += self.dinputsT
+            self.dhiddenVectorWeights += self.dhiddenVectorWeightsT
+            self.dweights += self.dweightsT
+            self.dbiases += self.dbiasesT
 
         # Regularization folded up # NOTE temporary # TODO add hidden weights to regularization
         if True:
@@ -578,15 +588,6 @@ class Layer_Recurrent:
             if self.bias_regularizer_l2 > 0:
                 self.dbiases += 2 * self.bias_regularizer_l2 * \
                     self.biases
-
-    # Retrieve layer parameters
-    def get_parameters(self):
-        return self.weights, self.biases
-
-    # Set weights and biases in a layer instance
-    def set_parameters(self, weights, biases):
-        self.weights = weights
-        self.biases = biases
 
 # Input "layer"
 
