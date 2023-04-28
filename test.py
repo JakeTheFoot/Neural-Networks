@@ -548,6 +548,7 @@ class Layer_Recurrent:
     # Backward pass
     def backward(self, dvalues):  # !
 
+        for i in reversed(range(self.timesteps)):
             self.dTanT = 1 - (self.hiddenVectorList[self.timestep] ** 2)
             self.dinputsT = dvalues * self.dTan
             self.dhiddenVectorWeightsT = np.dot(
