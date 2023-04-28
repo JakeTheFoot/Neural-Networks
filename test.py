@@ -535,11 +535,10 @@ class Layer_Recurrent:
 
         self.inputList.append(self.inputs)
 
-        self.inputs += np.dot(self.hiddenVector,
-                              self.HiddenVectorWeights) + self.biases
+        weighted_hidden = np.dot(self.hiddenVector, self.HiddenVectorWeights) + self.biases
 
         # Calculate output values from inputs, weights and biases
-        self.output = np.tanh(self.inputs)
+        self.output = np.tanh(self.inputs + weighted_hidden)
 
         self.hiddenVector = self.output
         self.hiddenVectorList.append(self.hiddenVector)
@@ -552,40 +551,40 @@ class Layer_Recurrent:
         self.dhiddenVectorWeights = np.zeros_like(self.HiddenVectorWeights)
         self.dweights = np.zeros_like(self.weights)
         self.dbiases = np.zeros_like(self.biases)
+        dhidden_prev = np.zeros_like(self.hiddenVector)
 
         for i in reversed(range(self.timesteps)):
             self.dTan = 1 - (self.hiddenVectorList[i] ** 2)
-            self.dinputsT = dvalues * self.dTan
-            self.dhiddenVectorWeightsT = np.dot(
-                self.hiddenVectorList[i - 1].T, self.dinputsT)
-            self.dweightsT = np.dot(
-                self.inputList[i].T, self.dinputsT)
+            self.dinputsT = (dvalues + dhidden_prev) * self.dTan
+            self.dhiddenVectorWeightsT = np.dot(self.hiddenVectorList[i - 1].T, self.dinputsT)
+            self.dweightsT = np.dot(self.inputList[i].T, self.dinputsT)
             self.dbiasesT = np.sum(self.dinputsT, axis=0, keepdims=True)
+            
+            dhidden_prev = np.dot(self.dinputsT, self.HiddenVectorWeights.T)
 
             self.dinputs += self.dinputsT
             self.dhiddenVectorWeights += self.dhiddenVectorWeightsT
             self.dweights += self.dweightsT
             self.dbiases += self.dbiasesT
 
-        # Regularization folded up # NOTE temporary # TODO add hidden weights to regularization
-        if True:
-            # Gradients on regularization
-            # L1 on weights
-            if self.weight_regularizer_l1 > 0:
+# TODO add hidden weights to regularization
+        # Gradients on regularization
+        # L1 on weights
+        if self.weight_regularizer_l1 > 0:
                 dL1 = np.ones_like(self.weights)
                 dL1[self.weights < 0] = -1
                 self.dweights += self.weight_regularizer_l1 * dL1
-            # L2 on weights
-            if self.weight_regularizer_l2 > 0:
+        # L2 on weights
+        if self.weight_regularizer_l2 > 0:
                 self.dweights += 2 * self.weight_regularizer_l2 * \
                     self.weights
-            # L1 on biases
-            if self.bias_regularizer_l1 > 0:
+        # L1 on biases
+        if self.bias_regularizer_l1 > 0:
                 dL1 = np.ones_like(self.biases)
                 dL1[self.biases < 0] = -1
                 self.dbiases += self.bias_regularizer_l1 * dL1
-            # L2 on biases
-            if self.bias_regularizer_l2 > 0:
+        # L2 on biases
+        if self.bias_regularizer_l2 > 0:
                 self.dbiases += 2 * self.bias_regularizer_l2 * \
                     self.biases
 
