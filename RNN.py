@@ -1,4 +1,3 @@
-
 '''
 TODO:
 - Add a way to save the recurrent and convolutional layers
@@ -510,7 +509,7 @@ class Layer_Flatten:
         # convert the summed_inputs array to a NumPy array
         self.dinputs = np.array(self.summed_inputs, dtype=object)
 
-# Recurrent layer
+# Layer_Recurrent
 
 
 class Layer_Recurrent:
@@ -519,80 +518,104 @@ class Layer_Recurrent:
     def __init__(self, n_inputs, n_neurons,
                  weight_regularizer_l1=0, weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0, initializationMethod="Zeros"):
-
+        self.n_neurons = n_neurons
+        # Initialize hiddenVector
         if initializationMethod == "Zeros":
             self.hiddenVector = np.zeros((model.initial_batch_size, n_neurons))
+            self.hiddenVectorList = [self.hiddenVector]
         else:
             self.hiddenVector = 0.01 * \
                 np.random.randn(model.initial_batch_size, n_neurons)
-
-        self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
+            self.hiddenVectorList = [self.hiddenVector]
+        self.initmethod = initializationMethod
+        # Hidden Vector weights initialization
         self.HiddenVectorWeights = 0.01 * np.random.randn(n_neurons, n_neurons)
+        # Initialize weights and biases
+        self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
         self.biases = np.zeros((1, n_neurons))
-        self.inputscount = n_inputs
-
+        # Set regularization strength
         self.weight_regularizer_l1 = weight_regularizer_l1
         self.weight_regularizer_l2 = weight_regularizer_l2
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
+        self.inputList = []
 
+        self.timesteps = model.timesteps  # ! TODO make sure this is the correct name
+
+    # reset hidden vector
+    def reset(self):
+
+        if self.initmethod == "Zeros":
+            self.hiddenVector = np.zeros((len(model.batch_X), self.n_neurons))
+        else:
+            self.hiddenVector = 0.01 * \
+                np.random.randn(len(model.batch_X), self.n_neurons)
+        self.hiddenVectorList = [self.hiddenVector]
+        self.inputList = []
+
+    # Forward pass
     def forward(self, inputs, training):
-        self.hiddenVectorInput = np.dot(
-            self.hiddenVector, self.HiddenVectorWeights)
+        # Remember input values
         self.inputs = inputs
-        self.inputs = np.dot(self.inputs, self.weights)
-        self.inputs += self.hiddenVectorInput + self.biases
-        self.output = np.tanh(self.inputs)
+
+        self.inputList.append(self.inputs)
+
+        weighted_hidden = np.dot(
+            self.hiddenVector, self.HiddenVectorWeights) + self.biases
+
+        # Calculate output values from inputs, weights and biases
+        # print('input shape:', inputs.shape)
+        # print('weighted hidden shape:', weighted_hidden.shape)
+        self.output = np.tanh(self.inputs + weighted_hidden)
+
         self.hiddenVector = self.output
+        self.hiddenVectorList.append(self.hiddenVector)
+        self.dinputsT = 1
 
-        # Initialize outputs list and store the current output
-        if not hasattr(self, 'outputs'):
-            self.outputs = []
-        self.outputs.append(self.output)
+    # Backward pass
+    def backward(self, dvalues):  # !
 
-    def backward(self, dvalues):
+        self.dinputs = np.zeros_like(self.inputs)
+        self.dhiddenVectorWeights = np.zeros_like(self.HiddenVectorWeights)
         self.dweights = np.zeros_like(self.weights)
         self.dbiases = np.zeros_like(self.biases)
-        self.dHiddenVectorWeights = np.zeros_like(self.HiddenVectorWeights)
+        dhidden_prev = np.zeros_like(self.hiddenVector)
 
-        dhidden = np.dot(dvalues, self.HiddenVectorWeights.T)
-        for t in reversed(range(len(self.outputs) - 1)):
-            dhidden *= (1 - self.outputs[t + 1] ** 2)
-            self.dHiddenVectorWeights += np.dot(
-                self.hiddenVector[t].reshape((len(self.hiddenVector[t]), 1)), dhidden)
-            self.dweights += np.dot(self.inputs.T, dhidden)
-            self.dbiases += np.sum(dhidden, axis=0, keepdims=True)
-            dhidden = np.dot(dhidden, self.HiddenVectorWeights.T)
+        for i in reversed(range(self.timesteps)):
+            self.dTan = 1 - (self.hiddenVectorList[i] ** 2)
+            self.dinputsT = (dvalues + dhidden_prev) * self.dTan
+            self.dhiddenVectorWeightsT = np.dot(
+                self.hiddenVectorList[i - 1].T, self.dinputsT)
+            self.dweightsT = np.dot(self.inputList[i].T, self.dinputsT)
+            self.dbiasesT = np.sum(self.dinputsT, axis=0, keepdims=True)
 
+            dhidden_prev = np.dot(self.dinputsT, self.HiddenVectorWeights.T)
+
+            self.dinputs += self.dinputsT
+            self.dhiddenVectorWeights += self.dhiddenVectorWeightsT
+            self.dweights += self.dweightsT
+            self.dbiases += self.dbiasesT
+
+# TODO add hidden weights to regularization
+        # Gradients on regularization
+        # L1 on weights
         if self.weight_regularizer_l1 > 0:
             dL1 = np.ones_like(self.weights)
             dL1[self.weights < 0] = -1
             self.dweights += self.weight_regularizer_l1 * dL1
-
+        # L2 on weights
         if self.weight_regularizer_l2 > 0:
-            self.dweights += 2 * self.weight_regularizer_l2 * self.weights
-
+            self.dweights += 2 * self.weight_regularizer_l2 * \
+                self.weights
+        # L1 on biases
         if self.bias_regularizer_l1 > 0:
             dL1 = np.ones_like(self.biases)
             dL1[self.biases < 0] = -1
             self.dbiases += self.bias_regularizer_l1 * dL1
-
+        # L2 on biases
         if self.bias_regularizer_l2 > 0:
-            self.dbiases += 2 * self.bias_regularizer_l2 * self.biases
-
-        self.dinputs = np.dot(dvalues, self.weights.T)
-
-    def get_parameters(self):
-        return self.weights, self.biases
-
-    def set_parameters(self, weights, biases):
-        self.weights = weights
-        self.biases = biases
-
-    def reset_hidden_state(self):
-        self.hiddenVector = np.zeros(
-            (model.initial_batch_size, self.hiddenVector.shape[1]))
-        self.outputs = []
+            self.dbiases += 2 * self.bias_regularizer_l2 * \
+                self.biases
 
 # Input "layer"
 
@@ -748,12 +771,14 @@ class Optimizer_SGD:
             # Build weight updates with momentum - take previous
             # updates multiplied by retain factor and update with
             # current gradients
-            weight_updates = self.momentum * layer.weight_momentums - \
+            weight_updates = \
+                self.momentum * layer.weight_momentums - \
                 self.current_learning_rate * layer.dweights
             layer.weight_momentums = weight_updates
 
             # Build bias updates1
-            bias_updates = self.momentum * layer.bias_momentums - \
+            bias_updates = \
+                self.momentum * layer.bias_momentums - \
                 self.current_learning_rate * layer.dbiases
             layer.bias_momentums = bias_updates
 
@@ -967,7 +992,7 @@ class Optimizer_Adam:
                 (1 - self.beta_1) * layer.dweights
             layer.hidden_vector_weight_momentums = self.beta_1 * \
                 layer.hidden_vector_weight_momentums + \
-                (1 - self.beta_1) * layer.dHiddenVectorWeights
+                (1 - self.beta_1) * layer.dhiddenVectorWeights
             layer.bias_momentums = self.beta_1 * \
                 layer.bias_momentums + \
                 (1 - self.beta_1) * layer.dbiases
@@ -986,7 +1011,7 @@ class Optimizer_Adam:
             layer.weight_cache = self.beta_2 * layer.weight_cache + \
                 (1 - self.beta_2) * layer.dweights**2
             layer.hidden_vector_weight_cache = self.beta_2 * layer.hidden_vector_weight_cache + \
-                (1 - self.beta_2) * layer.dHiddenVectorWeights**2
+                (1 - self.beta_2) * layer.dhiddenVectorWeights**2
             layer.bias_cache = self.beta_2 * layer.bias_cache + \
                 (1 - self.beta_2) * layer.dbiases**2
 
@@ -1275,7 +1300,6 @@ class Activation_Softmax_Loss_CategoricalCrossentropy:
 
     # Backward pass
     def backward(self, y_pred, y_true):
-
         # Number of samples
         samples = len(y_pred)
 
@@ -1290,6 +1314,7 @@ class Activation_Softmax_Loss_CategoricalCrossentropy:
         self.dinputs[range(samples), y_true] -= 1
         # Normalize gradient
         self.dinputs = self.dinputs / samples
+        # print(self.dinputs.shape)
 
 # Binary cross-entropy loss
 
@@ -1337,7 +1362,7 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
 
     # Forward pass
     def forward(self, y_pred, y_true):
-        # print('\n\nypred:\n\n', y_pred.shape, '\n\nytrue:\n\n', y_true.shape)
+
         # Calculate loss
         sample_losses = np.mean((y_true - y_pred)**2, axis=-1)
 
@@ -1352,16 +1377,12 @@ class Loss_MeanSquaredError(Loss):  # L2 loss
         # Number of outputs in every sample
         # We'll use the first sample to count them
         outputs = len(y_pred[0])
-        # Gradient on values
-        print('shape of y_true - y_pred:', (y_true - y_pred).shape)
-        print(y_true.shape, y_pred.shape)
 
-        self.dinputs = -2 * \
-            (y_true.reshape((samples, outputs)) - y_pred) / outputs
-        print(self.dinputs.shape)
+        # Gradient on values
+        self.dinputs = -2 * (y_true - y_pred) / outputs
+        # print(self.dinputs.shape)
         # Normalize gradient
         self.dinputs = self.dinputs / samples
-        print('dinputs_shape:', self.dinputs.shape)
 
 # Mean Absolute Error loss
 
@@ -1463,11 +1484,6 @@ class Accuracy_Regression(Accuracy):
 
     # Compares predictions to the ground truth values
     def compare(self, predictions, y):
-
-        if model.timesteps > 1:
-            # Calculate loss
-            predictions = np.squeeze(predictions)
-
         return np.absolute(predictions - y) < self.precision
 
 # Model class
@@ -1476,19 +1492,18 @@ class Accuracy_Regression(Accuracy):
 class Model:
 
     # Innitialization
-    def __init__(self, initial_batch_size=32):
+    def __init__(self, initial_batch_size=32, timesteps=1):
+        self.initial_batch_size = initial_batch_size
         # Create a list of network objects
         self.layers = []
         # Softmax classifier's output object
         self.softmax_classifier_output = None
-
-        self.initial_batch_size = initial_batch_size
+        self.timesteps = timesteps
 
     # Add objects to the model
     def add(self, layer):
         self.layers.append(layer)
 
-    # Set loss, optimizer and accuracy
     def set(self, *, loss=None, optimizer=None, accuracy=None, learning_rate=None, learning_rate_decay=None):
         if loss is not None:
             self.loss = loss
@@ -1567,8 +1582,7 @@ class Model:
 
     # Train the model
     def train(self, X, y, *, epochs=1, batch_size=None,
-              print_every=1, validation_data=None, timesteps=10):
-
+              print_every=1, validation_data=None):
         self.batch_size = batch_size
 
         # Initialize accuracy object
@@ -1590,7 +1604,7 @@ class Model:
         for epoch in range(1, epochs+1):
 
             # Print epoch number
-            print(f'epoch: {epoch}')
+            print(f'\nepoch: {epoch}')
 
             # Reset accumulated values in loss and accuracy objects
             self.loss.new_pass()
@@ -1598,7 +1612,6 @@ class Model:
 
             # Iterate over steps
             for step in range(train_steps):
-
                 # If batch size is not set -
                 # train using one step and full dataset
                 if batch_size is None:
@@ -1609,9 +1622,31 @@ class Model:
                 else:
                     self.batch_X = X[step*batch_size:(step+1)*batch_size]
                     batch_y = y[step*batch_size:(step+1)*batch_size]
-
+                # TODO add convolutional support AKA 4D input
                 # Perform the forward pass
-                output = self.forward(self.batch_X, training=True)
+                if self.timesteps > 1 and self.batch_X.ndim == 3:
+                    for layer in self.trainable_layers:
+                        if hasattr(layer, 'hiddenVector'):
+                            layer.reset()
+                    for t in range(self.timesteps):
+                        # Get the row at the current timestep
+                        # Add reshape here
+                        row_at_timestep = self.batch_X[:, t,
+                                                       :].reshape(-1, self.batch_X.shape[2])
+
+                        # Pass the row to the forward function
+                        output = self.forward(row_at_timestep, training=True)
+                elif self.timesteps > 1 and self.batch_X.ndim == 2:
+                    for t in range(self.timesteps):
+                        # Get the row at the current timestep
+                        row_at_timestep = self.batch_X[t, :]
+
+                        # Perform the forward pass
+                        output = self.forward(row_at_timestep, training=True)
+
+                else:
+                    # Perform the forward pass
+                    output = self.forward(self.batch_X, training=True)
 
                 # Calculate loss
                 data_loss, regularization_loss = \
@@ -1624,7 +1659,8 @@ class Model:
                     output)
                 accuracy = self.accuracy.calculate(predictions,
                                                    batch_y)
-
+                # print('output shape:', output.shape)
+                # print('true shape:', batch_y.shape)
                 # Perform backward pass
                 self.backward(output, batch_y)
 
@@ -1636,7 +1672,7 @@ class Model:
 
                 # Print a summary
                 if not step % print_every or step == train_steps - 1:
-                    print(f'step: {step}, ' +
+                    print(f'    step: {step}, ' +
                           f'acc: {accuracy:.3f}, ' +
                           f'loss: {loss:.3f} (' +
                           f'data_loss: {data_loss:.3f}, ' +
@@ -1655,7 +1691,7 @@ class Model:
                   f'loss: {epoch_loss:.3f} (' +
                   f'data_loss: {epoch_data_loss:.3f}, ' +
                   f'reg_loss: {epoch_regularization_loss:.3f}), ' +
-                  f'lr: {self.optimizer.current_learning_rate}')
+                  f'lr: {self.optimizer.current_learning_rate}\n')
 
             # If there is the validation data
             if validation_data is not None:
@@ -1686,31 +1722,49 @@ class Model:
 
         # Iterate over steps
         for step in range(validation_steps):
-
             # If batch size is not set -
             # train using one step and full dataset
             if batch_size is None:
-                self.batch_X = X_val
-                self.batch_y = y_val
+                self.batch_X = X
+                batch_y = y
 
             # Otherwise slice a batch
             else:
-                self.batch_X = X_val[
-                    step*batch_size:(step+1)*batch_size
-                ]
-                batch_y = y_val[
-                    step*batch_size:(step+1)*batch_size
-                ]
+                self.batch_X = X[step*batch_size:(step+1)*batch_size]
+                batch_y = y[step*batch_size:(step+1)*batch_size]
 
-            # Perform the forward pass
-            output = self.forward(self.batch_X, training=False)
+            # TODO add convolutional support AKA 4D input
 
-            # Calculate the loss
+            # Perform the forward pass with timesteps
+            if self.timesteps > 1 and self.batch_X.ndim == 3:
+                for layer in self.trainable_layers:
+                    if hasattr(layer, 'hiddenVector'):
+                        layer.reset()
+                for t in range(self.timesteps):
+                    # Get the row at the current timestep
+                    # Add reshape here
+                    row_at_timestep = self.batch_X[:, t,
+                                                   :].reshape(-1, self.batch_X.shape[2])
+
+                    # Pass the row to the forward function
+                    output = self.forward(row_at_timestep, training=True)
+
+            elif self.timesteps > 1 and self.batch_X.ndim == 2:
+                for t in range(self.timesteps):
+                    # Get the row at the current timestep
+                    row_at_timestep = self.batch_X[t, :]
+
+                    # Perform the forward pass
+                    output = self.forward(row_at_timestep, training=True)
+
+            else:
+                # Perform the forward pass
+                output = self.forward(self.batch_X, training=True)
+
             self.loss.calculate(output, batch_y)
 
             # Get predictions and calculate an accuracy
-            predictions = self.output_layer_activation.predictions(
-                output)
+            predictions = self.output_layer_activation.predictions(output)
             self.accuracy.calculate(predictions, batch_y)
 
         # Get and print validation loss and accuracy
@@ -1773,15 +1827,8 @@ class Model:
         # Call forward method of every object in a chain
         # Pass output of the previous object as a parameter
         for layer in self.layers:
-            # Handle the case of multiple recurrent layers
-            if isinstance(layer, Layer_Recurrent):
-                layer.prev_output = layer.prev.output
-                layer.forward(layer.prev_output, training)
-            # Handle the case of convolutional layers with three-dimensional inputs
-            elif len(layer.prev.output.shape) == 3:
-                layer.forward(layer.prev.output, training)
-            else:
-                layer.forward(layer.prev.output, training)
+
+            layer.forward(layer.prev.output, training)
 
         # "layer" is now the last object from the list,
         # return its output
@@ -1815,20 +1862,14 @@ class Model:
         # First call backward method on the loss
         # this will set dinputs property that the last
         # layer will try to access shortly
+        y = y.reshape(-1, 1)
+
         self.loss.backward(output, y)
 
         # Call backward method going through all the objects
         # in reversed order passing dinputs as a parameter
         for layer in reversed(self.layers):
-            # Handle the case of multiple recurrent layers
-            if isinstance(layer, Layer_Recurrent):
-                layer.next_dinputs = layer.next.dinputs
-                layer.backward(layer.next_dinputs)
-            # Handle the case of convolutional layers with three-dimensional inputs
-            elif len(layer.next.dinputs.shape) == 3:
-                layer.backward(layer.next.dinputs)
-            else:
-                layer.backward(layer.next.dinputs)
+            layer.backward(layer.next.dinputs)
 
     # Retrieves and returns parameters of trainable layers
     def get_parameters(self):
@@ -1894,6 +1935,7 @@ class Model:
             pickle.dump(model, f)
 
     # Loads and returns a model
+
     @staticmethod
     def load(path):
 
@@ -1995,7 +2037,7 @@ class BayesianOptimizer(ABC):
         max_index = np.argmax(y)
         return X[max_index], y[max_index]
 
-    @ abstractmethod
+    @abstractmethod
     def _acquisition_function(self, X, y, bounds):
         pass
 
@@ -2626,7 +2668,7 @@ def flip_bounds(HP_Range):
     flipped_HP_Range = [(upper, lower) for lower, upper in HP_Range]
     return flipped_HP_Range
 
-# Create stock dataset
+# Create stock data
 
 
 def create_stock_data(Num_of_Days, Percent_for_Tests, etf_folder_path_input="stock_dataset/ETFs/"):
@@ -2711,7 +2753,6 @@ if True:
     agent = 0
     episodes = 0
 
-# Create dataset
 X, X_test, y, y_test = create_stock_data(
     Num_of_Days=10, Percent_for_Tests=0.1)
 
@@ -2719,7 +2760,7 @@ y = y[:, -1]
 y_test = y_test[:, -1]
 
 # Instantiate the model
-model = Model()
+model = Model(timesteps=10)
 
 # Add layers
 model.add(Layer_Dense(3, 96))
@@ -2741,4 +2782,4 @@ model.finalize()
 
 # Train the model
 model.train(X, y, validation_data=(X_test, y_test),
-            epochs=10, batch_size=32, print_every=100, timesteps=10)
+            epochs=100, batch_size=None, print_every=100)
