@@ -516,33 +516,46 @@ class Layer_Recurrent:
 
     # Layer initialization
     def __init__(self, n_inputs, n_neurons,
-                 weight_regularizer_l1=0, weight_regularizer_l2=0,
+                 weight_regularizer_l1=0, weight_regularizer_l2=0, HV_weight_regularizer_l1=0, HV_weight_regularizer_l2=0,
                  bias_regularizer_l1=0, bias_regularizer_l2=0, initializationMethod="Zeros"):
+
+        # Save type of recurrent layer
+        self.RecurrentType = 'Basic'
+
+        # Remember necessary values
         self.n_neurons = n_neurons
-        # Initialize hiddenVector
+        self.initmethod = initializationMethod
+        self.timesteps = model.timesteps
+
+        # Initialize hidden vector
+        # and hidden vector weights
         if initializationMethod == "Zeros":
             self.hiddenVector = np.zeros((model.initial_batch_size, n_neurons))
-            self.hiddenVectorList = [self.hiddenVector]
-        else:
+        elif initializationMethod != "Zeros":
             self.hiddenVector = 0.01 * \
                 np.random.randn(model.initial_batch_size, n_neurons)
-            self.hiddenVectorList = [self.hiddenVector]
-        self.initmethod = initializationMethod
-        # Hidden Vector weights initialization
         self.HiddenVectorWeights = 0.01 * np.random.randn(n_neurons, n_neurons)
-        # Initialize weights and biases
+
+        # Initialize memory
+        self.inputList = []
+        self.hiddenVectorList = [self.hiddenVector]
+
+        # Initialize input weights
         self.weights = 0.01 * np.random.randn(n_inputs, n_neurons)
+
+        # Initialize biases
         self.biases = np.zeros((1, n_neurons))
-        # Set regularization strength
+
+        # Set weight, hidden vector weight, and bias regularization strength
         self.weight_regularizer_l1 = weight_regularizer_l1
         self.weight_regularizer_l2 = weight_regularizer_l2
+        self.HV_weight_regularizer_l1 = HV_weight_regularizer_l1
+        self.HV_weight_regularizer_l2 = HV_weight_regularizer_l2
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
-        self.inputList = []
-
-        self.timesteps = model.timesteps  # ! TODO make sure this is the correct name
 
     # reset hidden vector
+
     def reset(self):
 
         if self.initmethod == "Zeros":
@@ -973,70 +986,71 @@ class Optimizer_Adam:
                         (np.sqrt(bias_cache_correctedK[i]) + self.epsilon)
 
         # If it's a recurrent layer
-        elif hasattr(layer, 'HiddenVectorWeights'):
-            # If layer does not contain cache arrays,
-            # create them filled with zeros
-            if not hasattr(layer, 'weight_cache'):
-                layer.weight_momentums = np.zeros_like(layer.weights)
-                layer.weight_cache = np.zeros_like(layer.weights)
-                layer.hidden_vector_weight_momentums = np.zeros_like(
-                    layer.HiddenVectorWeights)
-                layer.hidden_vector_weight_cache = np.zeros_like(
-                    layer.HiddenVectorWeights)
-                layer.bias_momentums = np.zeros_like(layer.biases)
-                layer.bias_cache = np.zeros_like(layer.biases)
+        elif hasattr(layer, 'RecurrentType'):
+            if layer.RecurrentType == 'Basic':
+                # If layer does not contain cache arrays,
+                # create them filled with zeros
+                if not hasattr(layer, 'weight_cache'):
+                    layer.weight_momentums = np.zeros_like(layer.weights)
+                    layer.weight_cache = np.zeros_like(layer.weights)
+                    layer.hidden_vector_weight_momentums = np.zeros_like(
+                        layer.HiddenVectorWeights)
+                    layer.hidden_vector_weight_cache = np.zeros_like(
+                        layer.HiddenVectorWeights)
+                    layer.bias_momentums = np.zeros_like(layer.biases)
+                    layer.bias_cache = np.zeros_like(layer.biases)
 
-            # Update momentum with current gradients
-            layer.weight_momentums = self.beta_1 * \
-                layer.weight_momentums + \
-                (1 - self.beta_1) * layer.dweights
-            layer.hidden_vector_weight_momentums = self.beta_1 * \
-                layer.hidden_vector_weight_momentums + \
-                (1 - self.beta_1) * layer.dhiddenVectorWeights
-            layer.bias_momentums = self.beta_1 * \
-                layer.bias_momentums + \
-                (1 - self.beta_1) * layer.dbiases
+                # Update momentum with current gradients
+                layer.weight_momentums = self.beta_1 * \
+                    layer.weight_momentums + \
+                    (1 - self.beta_1) * layer.dweights
+                layer.hidden_vector_weight_momentums = self.beta_1 * \
+                    layer.hidden_vector_weight_momentums + \
+                    (1 - self.beta_1) * layer.dhiddenVectorWeights
+                layer.bias_momentums = self.beta_1 * \
+                    layer.bias_momentums + \
+                    (1 - self.beta_1) * layer.dbiases
 
-            # Get corrected momentum
-            # self.iteration is 0 at first pass
-            # and we need to start with 1 here
-            weight_momentums_corrected = layer.weight_momentums / \
-                (1 - self.beta_1 ** (self.iterations + 1))
-            hidden_vector_weight_momentums_corrected = layer.hidden_vector_weight_momentums / \
-                (1 - self.beta_1 ** (self.iterations + 1))
-            bias_momentums_corrected = layer.bias_momentums / \
-                (1 - self.beta_1 ** (self.iterations + 1))
+                # Get corrected momentum
+                # self.iteration is 0 at first pass
+                # and we need to start with 1 here
+                weight_momentums_corrected = layer.weight_momentums / \
+                    (1 - self.beta_1 ** (self.iterations + 1))
+                hidden_vector_weight_momentums_corrected = layer.hidden_vector_weight_momentums / \
+                    (1 - self.beta_1 ** (self.iterations + 1))
+                bias_momentums_corrected = layer.bias_momentums / \
+                    (1 - self.beta_1 ** (self.iterations + 1))
 
-            # Update cache with squared current gradients
-            layer.weight_cache = self.beta_2 * layer.weight_cache + \
-                (1 - self.beta_2) * layer.dweights**2
-            layer.hidden_vector_weight_cache = self.beta_2 * layer.hidden_vector_weight_cache + \
-                (1 - self.beta_2) * layer.dhiddenVectorWeights**2
-            layer.bias_cache = self.beta_2 * layer.bias_cache + \
-                (1 - self.beta_2) * layer.dbiases**2
+                # Update cache with squared current gradients
+                layer.weight_cache = self.beta_2 * layer.weight_cache + \
+                    (1 - self.beta_2) * layer.dweights**2
+                layer.hidden_vector_weight_cache = self.beta_2 * layer.hidden_vector_weight_cache + \
+                    (1 - self.beta_2) * layer.dhiddenVectorWeights**2
+                layer.bias_cache = self.beta_2 * layer.bias_cache + \
+                    (1 - self.beta_2) * layer.dbiases**2
 
-            # Get corrected cache
-            weight_cache_corrected = layer.weight_cache / \
-                (1 - self.beta_2 ** (self.iterations + 1))
-            hidden_vector_weight_cache_corrected = layer.hidden_vector_weight_cache / \
-                (1 - self.beta_2 ** (self.iterations + 1))
-            bias_cache_corrected = layer.bias_cache / \
-                (1 - self.beta_2 ** (self.iterations + 1))
+                # Get corrected cache
+                weight_cache_corrected = layer.weight_cache / \
+                    (1 - self.beta_2 ** (self.iterations + 1))
+                hidden_vector_weight_cache_corrected = layer.hidden_vector_weight_cache / \
+                    (1 - self.beta_2 ** (self.iterations + 1))
+                bias_cache_corrected = layer.bias_cache / \
+                    (1 - self.beta_2 ** (self.iterations + 1))
 
-            # Vanilla SGD parameter update + normalization
-            # with square rooted cache
-            layer.weights -= self.current_learning_rate * \
-                weight_momentums_corrected / \
-                (np.sqrt(weight_cache_corrected) +
-                 self.epsilon)
-            layer.HiddenVectorWeights -= self.current_learning_rate * \
-                hidden_vector_weight_momentums_corrected / \
-                (np.sqrt(hidden_vector_weight_cache_corrected) +
-                 self.epsilon)
-            layer.biases -= self.current_learning_rate * \
-                bias_momentums_corrected / \
-                (np.sqrt(bias_cache_corrected) +
-                 self.epsilon)
+                # Vanilla SGD parameter update + normalization
+                # with square rooted cache
+                layer.weights -= self.current_learning_rate * \
+                    weight_momentums_corrected / \
+                    (np.sqrt(weight_cache_corrected) +
+                    self.epsilon)
+                layer.HiddenVectorWeights -= self.current_learning_rate * \
+                    hidden_vector_weight_momentums_corrected / \
+                    (np.sqrt(hidden_vector_weight_cache_corrected) +
+                    self.epsilon)
+                layer.biases -= self.current_learning_rate * \
+                    bias_momentums_corrected / \
+                    (np.sqrt(bias_cache_corrected) +
+                    self.epsilon)
 
         # If it's not a
         # convolutional layer
@@ -1102,101 +1116,47 @@ class Loss:
 
     # Regularization loss calculation
     def regularization_loss(self):
+        def l1_regularization(value, factor):
+            return factor * np.sum(np.abs(value))
 
-        # 0 by default
+        def l2_regularization(value, factor):
+            return factor * np.sum(value * value)
+
+        def apply_regularization(layer, attr, reg_l1, reg_l2, hv_reg_l1=None, hv_reg_l2=None):
+            if not hasattr(layer, attr):
+                return 0
+
+            value = getattr(layer, attr)
+            if isinstance(value, list):
+                value = [np.sum(np.abs(val)) for val in value]
+
+            loss = l1_regularization(value, reg_l1) + l2_regularization(value, reg_l2)
+
+            if hasattr(layer, 'RecurrentType') and layer.RecurrentType == 'Basic' and hv_reg_l1 and hv_reg_l2:
+                loss += l1_regularization(value, hv_reg_l1) + l2_regularization(value, hv_reg_l2)
+
+            return loss
+
+        # Initialize regularization_loss as 0
         regularization_loss = 0
 
-        # If there aren't any trainable convolutional layers
-        # in the network, run normal L1 and L2 regularization
-        if not any(isinstance(layer, Basic_Convolution) for layer in self.trainable_layers):
-            # Calculate regularization loss
-            # iterate all trainable layers
-            for layer in self.trainable_layers:
+        # Calculate regularization loss
+        # Iterate through all trainable layers
+        for layer in self.trainable_layers:
+            # L1 and L2 regularization - weights
+            regularization_loss += apply_regularization(
+                layer, 'weights' if not hasattr(layer, 'Filters') else 'Filters',
+                layer.weight_regularizer_l1, layer.weight_regularizer_l2,
+                layer.HV_weight_regularizer_l1 if hasattr(layer, 'HV_weight_regularizer_l1') else None,
+                layer.HV_weight_regularizer_l2 if hasattr(layer, 'HV_weight_regularizer_l2') else None)
 
-                # L1 regularization - weights
-                # calculate only when factor greater than 0
-                if layer.weight_regularizer_l1 > 0:
-                    regularization_loss += layer.weight_regularizer_l1 * \
-                        np.sum(np.abs(layer.weights))
-
-                # L2 regularization - weights
-                if layer.weight_regularizer_l2 > 0:
-                    regularization_loss += layer.weight_regularizer_l2 * \
-                        np.sum(layer.weights *
-                               layer.weights)
-
-                # L1 regularization - biases
-                # calculate only when factor greater than 0
-                if layer.bias_regularizer_l1 > 0:
-                    regularization_loss += layer.bias_regularizer_l1 * \
-                        np.sum(np.abs(layer.biases))
-
-                # L2 regularization - biases
-                if layer.bias_regularizer_l2 > 0:
-                    regularization_loss += layer.bias_regularizer_l2 * \
-                        np.sum(layer.biases *
-                               layer.biases)
-
-            return regularization_loss
-
-        # If there are trainable convolutional layers
-        # in the network, run L1 and L2 regularization
-        # by first checking the layer type
-        else:
-
-            # Calculate regularization loss
-            # iterate all trainable layers
-            for layer in self.trainable_layers:
-
-                if not hasattr(layer, 'Filters') and layer.weight_regularizer_l1 > 0:
-                    # L1 regularization - weights
-                    # calculate only when factor greater than 0
-                    regularization_loss += layer.weight_regularizer_l1 * \
-                        np.sum(np.abs(layer.weights))
-
-                elif layer.weight_regularizer_l1 > 0:
-                    # L1 regularization - weights
-                    regularization_loss += layer.weight_regularizer_l1 * \
-                        np.sum([np.sum(np.abs(K))
-                               for K in layer.Filters])
-
-                if not hasattr(layer, 'Filters') and layer.weight_regularizer_l2 > 0:
-                    # L2 regularization - weights
-                    regularization_loss += layer.weight_regularizer_l2 * \
-                        np.sum(layer.weights *
-                               layer.weights)
-
-                elif layer.weight_regularizer_l2 > 0:
-                    # L2 regularization - weights
-                    regularization_loss += layer.weight_regularizer_l2 * \
-                        np.sum([np.sum(K.ravel() *
-                               K.ravel()) for K in layer.Filters])
-
-                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l1 > 0:
-                    # L1 regularization - biases
-                    # calculate only when factor greater than 0
-                    regularization_loss += layer.bias_regularizer_l1 * \
-                        np.sum(np.abs(layer.biases))
-
-                elif layer.bias_regularizer_l1 > 0:
-                    # L1 regularization - biases
-                    # calculate only when factor greater than 0
-                    regularization_loss += layer.bias_regularizer_l1 * \
-                        np.sum(np.abs(layer.Biases))
-
-                if not hasattr(layer, 'Filters') and layer.bias_regularizer_l2 > 0:
-                    # L2 regularization - biases
-                    regularization_loss += layer.bias_regularizer_l2 * \
-                        np.sum(layer.biases *
-                               layer.biases)
-
-                elif layer.bias_regularizer_l2 > 0:
-                    # L2 regularization - biases
-                    regularization_loss += layer.bias_regularizer_l2 * \
-                        np.sum(layer.Biases *
-                               layer.Biases)
+            # L1 and L2 regularization - biases
+            regularization_loss += apply_regularization(
+                layer, 'biases' if not hasattr(layer, 'Filters') else 'Biases',
+                layer.bias_regularizer_l1, layer.bias_regularizer_l2)
 
         return regularization_loss
+
 
     # Set/remember trainable layers
     def remember_trainable_layers(self, trainable_layers):
@@ -1626,7 +1586,7 @@ class Model:
                 # Perform the forward pass
                 if self.timesteps > 1 and self.batch_X.ndim == 3:
                     for layer in self.trainable_layers:
-                        if hasattr(layer, 'hiddenVector'):
+                        if hasattr(layer, 'RecurrentType'):
                             layer.reset()
                     for t in range(self.timesteps):
                         # Get the row at the current timestep
@@ -1738,7 +1698,7 @@ class Model:
             # Perform the forward pass with timesteps
             if self.timesteps > 1 and self.batch_X.ndim == 3:
                 for layer in self.trainable_layers:
-                    if hasattr(layer, 'hiddenVector'):
+                    if hasattr(layer, 'RecurrentType'):
                         layer.reset()
                 for t in range(self.timesteps):
                     # Get the row at the current timestep
